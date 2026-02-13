@@ -30,7 +30,8 @@ VRMManager.prototype.setupFloatingButtons = function () {
     }
     const container = document.getElementById('vrm-container');
 
-    document.querySelectorAll('#live2d-floating-buttons').forEach(el => el.remove());
+    document.querySelectorAll('#live2d-floating-buttons, #live2d-lock-icon, #live2d-return-button-container')
+        .forEach(el => el.remove());
     const buttonsContainerId = 'vrm-floating-buttons';
     const old = document.getElementById(buttonsContainerId);
     if (old) old.remove();

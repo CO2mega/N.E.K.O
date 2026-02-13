@@ -14,6 +14,18 @@ class VRMManager {
         this._animationFrameId = null;
         this._uiUpdateLoopId = null;
         this.enablePhysics = true;
+        this._lookAtTarget = null;
+        this._mouseMoveHandler = null;
+        this._mouseRaycaster = null;
+        this._mouseNDC = null;
+        this._lookAtHeadWorldPos = null;
+        this._lookAtRayClosestPoint = null;
+        this._lookAtDirection = null;
+        this._lookAtDesiredPoint = null;
+        // 跟随时间常数（秒）：值越大，跟随越慢、越平滑
+        this._lookAtSmoothTime = 0.5;
+        // 头部到视线目标的固定距离（球面半径，单位：米）
+        this._lookAtDistance = 2.4;
 
         // 阴影资源引用（用于清理）
         this._shadowTexture = null;
@@ -35,6 +47,93 @@ class VRMManager {
         });
 
         this._initModules();
+    }
+
+    _ensureMouseLookAtResources() {
+        if (!window.THREE) return false;
+        if (!this._mouseRaycaster) this._mouseRaycaster = new window.THREE.Raycaster();
+        if (!this._mouseNDC) this._mouseNDC = new window.THREE.Vector2();
+        if (!this._lookAtHeadWorldPos) this._lookAtHeadWorldPos = new window.THREE.Vector3();
+        if (!this._lookAtRayClosestPoint) this._lookAtRayClosestPoint = new window.THREE.Vector3();
+        if (!this._lookAtDirection) this._lookAtDirection = new window.THREE.Vector3();
+        if (!this._lookAtDesiredPoint) this._lookAtDesiredPoint = new window.THREE.Vector3();
+        return true;
+    }
+
+    _getLookAtHeadWorldPosition() {
+        const headBone = this.currentModel?.vrm?.humanoid?.getNormalizedBoneNode('head');
+        if (headBone) {
+            headBone.updateMatrixWorld(true);
+            headBone.getWorldPosition(this._lookAtHeadWorldPos);
+            return this._lookAtHeadWorldPos;
+        }
+        if (this.currentModel?.vrm?.scene) {
+            this.currentModel.vrm.scene.updateMatrixWorld(true);
+            this.currentModel.vrm.scene.getWorldPosition(this._lookAtHeadWorldPos);
+            this._lookAtHeadWorldPos.y += 1.4;
+            return this._lookAtHeadWorldPos;
+        }
+        this._lookAtHeadWorldPos.set(0, 1.4, 0);
+        return this._lookAtHeadWorldPos;
+    }
+
+    _setLookAtTargetByMouse(clientX, clientY) {
+        if (!this.camera || !this.renderer || !this._lookAtTarget) return;
+        if (!this._ensureMouseLookAtResources()) return;
+
+        const canvas = this.renderer.domElement;
+        if (!canvas) return;
+
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        this._mouseNDC.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        this._mouseNDC.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+        this._mouseRaycaster.setFromCamera(this._mouseNDC, this.camera);
+        const headWorldPos = this._getLookAtHeadWorldPosition();
+        this._mouseRaycaster.ray.closestPointToPoint(headWorldPos, this._lookAtRayClosestPoint);
+        this._lookAtDirection.subVectors(this._lookAtRayClosestPoint, headWorldPos);
+
+        // 当鼠标刚好在头部投影附近时，回退到头部朝向相机方向，避免方向向量为零
+        if (this._lookAtDirection.lengthSq() < 1e-8) {
+            this._lookAtDirection.subVectors(this.camera.position, headWorldPos);
+        }
+        if (this._lookAtDirection.lengthSq() < 1e-8) return;
+
+        this._lookAtDirection.normalize();
+        this._lookAtDesiredPoint.copy(headWorldPos).addScaledVector(this._lookAtDirection, this._lookAtDistance);
+    }
+
+    _initMouseLookAtTracking() {
+        if (!this.scene || !this.camera || !window.THREE) return;
+        if (!this._ensureMouseLookAtResources()) return;
+
+        if (!this._lookAtTarget) {
+            this._lookAtTarget = new window.THREE.Object3D();
+            this._lookAtTarget.name = 'VRMLookAtMouseTarget';
+        }
+        if (this._lookAtTarget.parent !== this.scene) {
+            this.scene.add(this._lookAtTarget);
+        }
+
+        // 初始位置放在“头部->相机”方向的固定距离上，保持球面轨迹起点稳定
+        const headWorldPos = this._getLookAtHeadWorldPosition();
+        const initialDir = new window.THREE.Vector3().subVectors(this.camera.position, headWorldPos);
+        if (initialDir.lengthSq() < 1e-8) {
+            initialDir.set(0, 0, 1);
+        } else {
+            initialDir.normalize();
+        }
+        this._lookAtTarget.position.copy(headWorldPos).addScaledVector(initialDir, this._lookAtDistance);
+        this._lookAtDesiredPoint.copy(this._lookAtTarget.position);
+
+        if (!this._mouseMoveHandler) {
+            this._mouseMoveHandler = (event) => {
+                this._setLookAtTargetByMouse(event.clientX, event.clientY);
+            };
+            document.addEventListener('mousemove', this._mouseMoveHandler, { passive: true });
+        }
     }
 
     _initModules() {
@@ -318,6 +417,7 @@ class VRMManager {
     async initThreeJS(canvasId, containerId, lightingConfig = null) {
         // 检查是否已完全初始化（不仅检查 scene，还要检查 camera 和 renderer）
         if (this.scene && this.camera && this.renderer) {
+            this._initMouseLookAtTracking();
             this._isInitialized = true;
             return true;
         }
@@ -329,6 +429,7 @@ class VRMManager {
         }
         await this.core.init(canvasId, containerId, lightingConfig);
         if (this.interaction) this.interaction.initDragAndZoom();
+        this._initMouseLookAtTracking();
         this.startAnimateLoop();
         // 设置初始化标志
         this._isInitialized = true;
@@ -385,7 +486,12 @@ class VRMManager {
 
                 // 2. 视线更新
                 if (this.currentModel.vrm.lookAt) {
-                    this.currentModel.vrm.lookAt.target = this.camera;
+                    if (this._lookAtTarget && this._lookAtDesiredPoint) {
+                        const smoothTime = Math.max(0.01, this._lookAtSmoothTime);
+                        const alpha = Math.min(1, 1 - Math.exp(-delta / smoothTime));
+                        this._lookAtTarget.position.lerp(this._lookAtDesiredPoint, alpha);
+                    }
+                    this.currentModel.vrm.lookAt.target = this._lookAtTarget || this.camera;
                 }
 
                 // 3. 物理更新
@@ -768,6 +874,21 @@ class VRMManager {
         }
 
         // 8. 清理场景中的所有对象（包括灯光）
+        if (this._mouseMoveHandler) {
+            document.removeEventListener('mousemove', this._mouseMoveHandler);
+            this._mouseMoveHandler = null;
+        }
+        if (this._lookAtTarget && this._lookAtTarget.parent) {
+            this._lookAtTarget.parent.remove(this._lookAtTarget);
+        }
+        this._lookAtTarget = null;
+        this._mouseRaycaster = null;
+        this._mouseNDC = null;
+        this._lookAtHeadWorldPos = null;
+        this._lookAtRayClosestPoint = null;
+        this._lookAtDirection = null;
+        this._lookAtDesiredPoint = null;
+
         if (this.scene) {
             // 遍历并清理所有子对象
             while (this.scene.children.length > 0) {

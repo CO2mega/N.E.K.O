@@ -1020,6 +1020,53 @@ function init_app() {
         console.log('[BroadcastChannel] 初始化失败，将使用 postMessage 后备方案:', e);
     }
 
+    function cleanupLive2DOverlayUI() {
+        const live2dManager = window.live2dManager;
+
+        if (live2dManager) {
+            if (live2dManager._lockIconTicker && live2dManager.pixi_app?.ticker) {
+                try {
+                    live2dManager.pixi_app.ticker.remove(live2dManager._lockIconTicker);
+                } catch (_) {
+                    // ignore
+                }
+                live2dManager._lockIconTicker = null;
+            }
+            if (live2dManager._floatingButtonsTicker && live2dManager.pixi_app?.ticker) {
+                try {
+                    live2dManager.pixi_app.ticker.remove(live2dManager._floatingButtonsTicker);
+                } catch (_) {
+                    // ignore
+                }
+                live2dManager._floatingButtonsTicker = null;
+            }
+            if (live2dManager._floatingButtonsResizeHandler) {
+                window.removeEventListener('resize', live2dManager._floatingButtonsResizeHandler);
+                live2dManager._floatingButtonsResizeHandler = null;
+            }
+            if (live2dManager.tutorialProtectionTimer) {
+                clearInterval(live2dManager.tutorialProtectionTimer);
+                live2dManager.tutorialProtectionTimer = null;
+            }
+            live2dManager._floatingButtonsContainer = null;
+            live2dManager._returnButtonContainer = null;
+            live2dManager._lockIconElement = null;
+            live2dManager._lockIconImages = null;
+        }
+
+        document.querySelectorAll('#live2d-floating-buttons, #live2d-lock-icon, #live2d-return-button-container')
+            .forEach(el => el.remove());
+    }
+
+    function cleanupVRMOverlayUI() {
+        if (window.vrmManager && typeof window.vrmManager.cleanupUI === 'function') {
+            window.vrmManager.cleanupUI();
+            return;
+        }
+        document.querySelectorAll('#vrm-floating-buttons, #vrm-lock-icon, #vrm-return-button-container')
+            .forEach(el => el.remove());
+    }
+
     // 模型重载处理函数
     async function handleModelReload(targetLanlanName = '') {
         // 如果消息携带了 lanlan_name，且与当前页面角色不一致，则忽略（避免配置其它角色时影响当前主界面）
@@ -1074,6 +1121,14 @@ function init_app() {
                     console.warn('[Model] 模型路径为空，保持当前模型不变');
                     showStatusToast(window.t ? window.t('app.modelPathEmpty') : '模型路径为空', 2000);
                     return;
+                }
+
+                if (oldModelType !== newModelType) {
+                    if (newModelType === 'vrm') {
+                        cleanupLive2DOverlayUI();
+                    } else {
+                        cleanupVRMOverlayUI();
+                    }
                 }
 
                 // 2. 更新全局配置
