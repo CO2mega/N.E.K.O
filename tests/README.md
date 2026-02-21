@@ -102,13 +102,23 @@ tests/
 
 The test suite includes an **LLM Judger** (`tests/utils/llm_judger.py`) that evaluates the quality and correctness of AI responses using various LLM providers (OpenAI, SiliconFlow, Qwen, GLM) with automatic fallback.
 
+### Evaluation Modes
+
+| Mode | Method | Description |
+|---|---|---|
+| Single-check | `judge()` | Evaluates one input→output pair against criteria (YES/NO) |
+| Conversation | `judge_conversation()` | Evaluates a full multi-turn conversation holistically with 5-dimension scoring |
+
+**Conversation Quality Dimensions** (each scored 1-10):
+- Coherence, Context Retention, Character Consistency, Response Quality, Engagement
+
 ### Report Generation
-When tests involving the `llm_judger` are run, results are collected and a report is generated at the end of the test session.
+When tests involving the `llm_judger` are run, results are collected and a **narrative report** is generated at the end of the test session.
 
 - **Storage Location**: `tests/reports/`
 - **File Format**: 
-  - `test_report_YYYYMMDD_HHMMSS.json`: Machine-readable results with full input/output/verdicts.
-  - `test_report_YYYYMMDD_HHMMSS.md`: Human-readable summary table.
+  - `test_report_YYYYMMDD_HHMMSS.json`: Machine-readable results with full input/output/verdicts/scores.
+  - `test_report_YYYYMMDD_HHMMSS.md`: **LLM-generated narrative report** with executive summary, detailed analysis, and recommendations. Falls back to table format if LLM is unavailable.
 
 ### LLM Provider Configuration
 The judger uses keys defined in `tests/api_keys.json`. It will attempt to use providers in order of preference and skip those with missing or placeholder keys (e.g., `sk-...`).
