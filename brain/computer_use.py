@@ -8,7 +8,6 @@ Supports thinking mode for models that provide it.
 """
 from typing import Dict, Any, Optional, List, Tuple
 import re
-import io
 import base64
 import logging
 import platform
@@ -18,9 +17,7 @@ import traceback
 from openai import OpenAI
 from config import get_extra_body
 from utils.config_manager import get_config_manager
-
-_TARGET_HEIGHT = 1080
-_JPEG_QUALITY = 75
+from utils.screenshot_utils import compress_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +36,8 @@ except Exception:
 
 try:
     import pyautogui
-    from PIL import Image as _PILImage
-    _LANCZOS = getattr(_PILImage, 'LANCZOS', getattr(_PILImage, 'ANTIALIAS', 1))
 except Exception:
     pyautogui = None
-    _LANCZOS = 1
 
 
 # ─── Prompt Templates ───────────────────────────────────────────────────
@@ -324,17 +318,6 @@ class _ScaledPyAutoGUI:
 
 # ─── Main Adapter ───────────────────────────────────────────────────────
 
-def _compress_screenshot(img, target_h: int = _TARGET_HEIGHT, quality: int = _JPEG_QUALITY) -> bytes:
-    """Resize to *target_h*p (keep aspect ratio) and encode as JPEG."""
-    w, h = img.size
-    if h > target_h:
-        ratio = target_h / h
-        img = img.resize((int(w * ratio), target_h), _LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=quality, optimize=True)
-    return buf.getvalue()
-
-
 class ComputerUseAdapter:
     """GUI automation agent: single-call Thought + Action + Code paradigm.
 
@@ -577,7 +560,7 @@ class ComputerUseAdapter:
             for step in range(1, self.max_steps + 1):
                 t0 = time.monotonic()
                 shot = pyautogui.screenshot()
-                jpg_bytes = _compress_screenshot(shot)
+                jpg_bytes = compress_screenshot(shot)
                 t_capture = time.monotonic() - t0
 
                 t1 = time.monotonic()

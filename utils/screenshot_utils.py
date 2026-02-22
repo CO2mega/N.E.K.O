@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 MAX_BASE64_SIZE = MAX_IMAGE_SIZE_BYTES * 4 // 3 + 100
 
+# 截图压缩默认参数（供 computer_use 等模块复用）
+COMPRESS_TARGET_HEIGHT = 1080
+COMPRESS_JPEG_QUALITY = 75
+_LANCZOS = getattr(Image, 'LANCZOS', getattr(Image, 'ANTIALIAS', 1))
+
 def _validate_image_data(image_bytes: bytes) -> Optional[Image.Image]:
     """验证图片数据有效性"""
     try:
@@ -27,6 +32,21 @@ def _validate_image_data(image_bytes: bytes) -> Optional[Image.Image]:
     except Exception as e:
         logger.warning(f"图片验证失败: {e}")
         return None
+
+
+def compress_screenshot(
+    img: Image.Image,
+    target_h: int = COMPRESS_TARGET_HEIGHT,
+    quality: int = COMPRESS_JPEG_QUALITY,
+) -> bytes:
+    """Resize to *target_h*p (keep aspect ratio) and encode as JPEG."""
+    w, h = img.size
+    if h > target_h:
+        ratio = target_h / h
+        img = img.resize((int(w * ratio), target_h), _LANCZOS)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
 
 
 async def process_screen_data(data: str) -> Optional[str]:
@@ -74,7 +94,8 @@ async def process_screen_data(data: str) -> Optional[str]:
 
 async def analyze_image_with_vision_model(
     image_b64: str,
-    max_tokens: int = 500
+    max_tokens: int = 500,
+    window_title: str = '',
 ) -> Optional[str]:
     """
     使用视觉模型分析图片
@@ -82,6 +103,7 @@ async def analyze_image_with_vision_model(
     参数:
         image_b64: 图片的base64编码（不含data:前缀）
         max_tokens: 最大输出token数，默认 500
+        window_title: 可选的窗口标题，提供时会加入提示词以丰富上下文
         
     返回: 图片描述文本，失败则返回 None
     """
@@ -113,12 +135,19 @@ async def analyze_image_with_vision_model(
             base_url=vision_base_url if vision_base_url else None
         )
         
+        if window_title:
+            system_content = "你是一个图像描述助手。请根据用户的屏幕截图和当前窗口标题，简洁描述用户正在做什么、屏幕上的主要内容和关键细节和你觉得有趣的地方。不超过250字。"
+            user_text = f"当前活跃窗口标题：{window_title}\n请描述截图内容。"
+        else:
+            system_content = "你是一个图像描述助手, 请简洁地描述图片中的主要内容、关键细节和你觉得有趣的地方。你的回答不能超过250字。"
+            user_text = "请描述这张图片的内容。"
+        
         response = await client.chat.completions.create(
             model=vision_model,
             messages = [
                 {
                     "role": "system",
-                    "content": "你是一个图像描述助手, 请简洁地描述图片中的主要内容、关键细节和你觉得有趣的地方。你的回答不能超过250字。"
+                    "content": system_content
                 },
                 {
                     "role": "user",
@@ -131,7 +160,7 @@ async def analyze_image_with_vision_model(
                         },
                         {
                             "type": "text",
-                            "text": "请描述这张图片的内容。"
+                            "text": user_text
                         }
                     ]
                 }
@@ -156,7 +185,7 @@ async def analyze_image_with_vision_model(
         return None
 
 
-async def analyze_screenshot_from_data_url(data_url: str) -> Optional[str]:
+async def analyze_screenshot_from_data_url(data_url: str, window_title: str = '') -> Optional[str]:
     """
     分析前端发送的截图DataURL
     只支持JPEG格式，其他格式会自动转换为JPEG
@@ -205,7 +234,7 @@ async def analyze_screenshot_from_data_url(data_url: str) -> Optional[str]:
             return None
         
         # 调用视觉模型分析（只使用JPEG）
-        description = await analyze_image_with_vision_model(base64_data)
+        description = await analyze_image_with_vision_model(base64_data, window_title=window_title)
         
         if description:
             logger.info(f"AI截图分析成功: {description[:100]}...")
