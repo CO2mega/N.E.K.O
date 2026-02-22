@@ -3,6 +3,8 @@
  * 包含任务面板、任务卡片、HUD拖拽功能
  */
 
+window.AgentHUD = window.AgentHUD || {};
+
 // 缓存当前显示器边界信息（多屏幕支持）
 let cachedDisplayHUD = {
     x: 0,
@@ -81,7 +83,7 @@ try {
 }
 
 // 创建Agent弹出框内容
-Live2DManager.prototype._createAgentPopupContent = function (popup) {
+window.AgentHUD._createAgentPopupContent = function (popup) {
     // 添加状态显示栏 - Fluent Design
     const statusDiv = document.createElement('div');
     statusDiv.id = 'live2d-agent-status';
@@ -175,7 +177,7 @@ Live2DManager.prototype._createAgentPopupContent = function (popup) {
 };
 
 // 创建 Agent 任务 HUD（屏幕正中右侧）
-Live2DManager.prototype.createAgentTaskHUD = function () {
+window.AgentHUD.createAgentTaskHUD = function () {
     // 如果已存在则不重复创建
     if (document.getElementById('agent-task-hud')) {
         return document.getElementById('agent-task-hud');
@@ -336,28 +338,29 @@ Live2DManager.prototype.createAgentTaskHUD = function () {
     const applyHudCollapsed = (collapsed) => {
         if (collapsed) {
             hud.style.width = 'auto';
-            hud.style.padding = '8px 12px';
+            hud.style.padding = '12px 16px'; // 保持和展开时 header 内容一样的 padding，更匀称
+            hud.style.gap = '0'; // 折叠时移除外层 gap，避免底部多出一截
             title.style.display = 'none';
             stats.style.display = 'flex';
             header.style.padding = '0';
-            header.style.margin = '0';
+            header.style.margin = '0'; // 移除特意为拉伸背景设置的负 margin
             header.style.backgroundColor = 'transparent';
             header.style.borderBottom = 'none';
             header.style.justifyContent = 'center';
-            taskList.style.maxHeight = '0';
-            taskList.style.opacity = '0';
-            taskList.style.overflow = 'hidden';
+            taskList.style.display = 'none'; // 彻底隐藏任务列表容器，避免占据哪怕 1px 的高度和 gap
             minimizeBtn.style.transform = 'rotate(-90deg)';
         } else {
             hud.style.width = '320px';
             hud.style.padding = '16px';
+            hud.style.gap = '12px'; // 恢复外层 gap
             title.style.display = '';
             stats.style.display = 'flex';
             header.style.padding = '12px 16px';
-            header.style.margin = '-16px -16px 16px -16px';
+            header.style.margin = '-16px -16px 16px -16px'; // 恢复拉伸背景的负 margin
             header.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
             header.style.borderBottom = '1px solid rgba(0, 0, 0, 0.08)';
             header.style.justifyContent = 'space-between';
+            taskList.style.display = 'flex'; // 恢复任务列表容器
             taskList.style.maxHeight = 'calc(60vh - 80px)';
             taskList.style.opacity = '1';
             taskList.style.overflow = '';
@@ -413,12 +416,12 @@ Live2DManager.prototype.createAgentTaskHUD = function () {
 };
 
 // 设置空状态折叠功能 (已移除, 之前的 empty-state triangle 不再使用)
-Live2DManager.prototype._setupCollapseFunctionality = function (emptyState, collapseButton, emptyContent) {
+window.AgentHUD._setupCollapseFunctionality = function (emptyState, collapseButton, emptyContent) {
     // Legacy function, kept for signature compatibility if referenced
 };
 
 // 显示任务 HUD
-Live2DManager.prototype.showAgentTaskHUD = function () {
+window.AgentHUD.showAgentTaskHUD = function () {
     let hud = document.getElementById('agent-task-hud');
     if (!hud) {
         hud = this.createAgentTaskHUD();
@@ -442,7 +445,7 @@ Live2DManager.prototype.showAgentTaskHUD = function () {
 };
 
 // 隐藏任务 HUD
-Live2DManager.prototype.hideAgentTaskHUD = function () {
+window.AgentHUD.hideAgentTaskHUD = function () {
     const hud = document.getElementById('agent-task-hud');
     if (hud) {
         hud.style.opacity = '0';
@@ -457,7 +460,7 @@ Live2DManager.prototype.hideAgentTaskHUD = function () {
 };
 
 // 更新任务 HUD 内容
-Live2DManager.prototype.updateAgentTaskHUD = function (tasksData) {
+window.AgentHUD.updateAgentTaskHUD = function (tasksData) {
     const taskList = document.getElementById('agent-task-list');
     const emptyState = document.getElementById('agent-task-empty');
     const runningCount = document.getElementById('hud-running-count');
@@ -499,7 +502,7 @@ Live2DManager.prototype.updateAgentTaskHUD = function (tasksData) {
 };
 
 // 创建单个任务卡片
-Live2DManager.prototype._createTaskCard = function (task) {
+window.AgentHUD._createTaskCard = function (task) {
     const card = document.createElement('div');
     card.className = 'task-card';
     card.dataset.taskId = task.id;
@@ -629,7 +632,7 @@ Live2DManager.prototype._createTaskCard = function (task) {
 };
 
 // 设置HUD全局拖拽功能
-Live2DManager.prototype._setupDragging = function (hud) {
+window.AgentHUD._setupDragging = function (hud) {
     let isDragging = false;
     let dragOffsetX = 0;
     let dragOffsetY = 0;
