@@ -769,8 +769,8 @@ function init_app() {
                                 if (t && t.id) window._agentTaskMap.set(t.id, t);
                             });
                             const tasks = Array.from(window._agentTaskMap.values());
-                            if (window.live2dManager && typeof window.live2dManager.updateAgentTaskHUD === 'function') {
-                                window.live2dManager.updateAgentTaskHUD({
+                            if (window.live2dManager && typeof window.AgentHUD.updateAgentTaskHUD === 'function') {
+                                window.AgentHUD.updateAgentTaskHUD({
                                     success: true,
                                     tasks,
                                     total_count: tasks.length,
@@ -796,8 +796,8 @@ function init_app() {
                             window._agentTaskMap.set(task.id, task);
                         }
                         const tasks = Array.from(window._agentTaskMap.values());
-                        if (window.live2dManager && typeof window.live2dManager.updateAgentTaskHUD === 'function') {
-                            window.live2dManager.updateAgentTaskHUD({
+                        if (window.live2dManager && typeof window.AgentHUD.updateAgentTaskHUD === 'function') {
+                            window.AgentHUD.updateAgentTaskHUD({
                                 success: true,
                                 tasks,
                                 total_count: tasks.length,
@@ -4814,20 +4814,19 @@ function init_app() {
                     console.log('[showCurrentModel] 创建后VRM浮动按钮存在:', !!vrmFloatingButtons);
                 }
 
-                // 显示VRM浮动按钮（与 showLive2d 保持一致的处理方式）
+                // VRM 浮动按钮交给 vrm-ui-buttons 内部显隐逻辑管理（避免强制常显）
                 if (vrmFloatingButtons) {
-                    vrmFloatingButtons.style.setProperty('display', 'flex', 'important');
-                    vrmFloatingButtons.style.setProperty('visibility', 'visible', 'important');
-                    vrmFloatingButtons.style.setProperty('opacity', '1', 'important');
+                    vrmFloatingButtons.style.removeProperty('display');
+                    vrmFloatingButtons.style.removeProperty('visibility');
+                    vrmFloatingButtons.style.removeProperty('opacity');
                 }
 
-                //  显示VRM锁图标（与 showLive2d 保持一致的处理方式）
+                // VRM 锁图标同样交给 vrm-ui-buttons 自主判定显示
                 const vrmLockIcon = document.getElementById('vrm-lock-icon');
                 if (vrmLockIcon) {
                     vrmLockIcon.style.removeProperty('display');
                     vrmLockIcon.style.removeProperty('visibility');
                     vrmLockIcon.style.removeProperty('opacity');
-                    vrmLockIcon.style.display = 'block';
                 }
 
                 // 设置VRM解锁状态（统一使用 core.setLocked API）
@@ -5341,7 +5340,7 @@ function init_app() {
         // 恢复VRM的锁图标
         const vrmLockIcon = document.getElementById('vrm-lock-icon');
         if (vrmLockIcon) {
-            vrmLockIcon.style.display = 'block';
+            vrmLockIcon.style.removeProperty('display');
             vrmLockIcon.style.removeProperty('visibility');
             vrmLockIcon.style.removeProperty('opacity');
         }
@@ -5391,18 +5390,13 @@ function init_app() {
             console.log('[App] 已恢复所有Live2D弹窗的交互能力，数量:', allLive2dPopups.length);
         }
 
-        // 恢复VRM的浮动按钮系统（使用 !important 强制显示，覆盖之前的隐藏样式）
+        // 恢复VRM浮动按钮系统：仅清理强制隐藏样式，不强制设为常显
         const vrmFloatingButtons = document.getElementById('vrm-floating-buttons');
         if (vrmFloatingButtons) {
             // 先清除所有可能的隐藏样式
             vrmFloatingButtons.style.removeProperty('display');
             vrmFloatingButtons.style.removeProperty('visibility');
             vrmFloatingButtons.style.removeProperty('opacity');
-
-            // 使用 !important 强制显示，确保覆盖之前的隐藏样式（与Live2D保持一致）
-            vrmFloatingButtons.style.setProperty('display', 'flex', 'important');
-            vrmFloatingButtons.style.setProperty('visibility', 'visible', 'important');
-            vrmFloatingButtons.style.setProperty('opacity', '1', 'important');
 
             // 恢复所有按钮的显示状态
             if (window.vrmManager && window.vrmManager._floatingButtons) {
@@ -6929,10 +6923,10 @@ function init_app() {
 
     // 启动任务状态轮询
     window.startAgentTaskPolling = function () {
-        // Always attempt to show HUD (live2dManager may have loaded since last call)
-        if (window.live2dManager) {
-            window.live2dManager.createAgentTaskHUD();
-            window.live2dManager.showAgentTaskHUD();
+        // Always attempt to show HUD
+        if (window.AgentHUD && window.AgentHUD.createAgentTaskHUD) {
+            window.AgentHUD.createAgentTaskHUD();
+            window.AgentHUD.showAgentTaskHUD();
         }
 
         if (agentTaskPollingInterval) return;
@@ -6962,8 +6956,8 @@ function init_app() {
         }
 
         // 隐藏 HUD
-        if (window.live2dManager) {
-            window.live2dManager.hideAgentTaskHUD();
+        if (window.AgentHUD && window.AgentHUD.hideAgentTaskHUD) {
+            window.AgentHUD.hideAgentTaskHUD();
         }
     };
 
@@ -9310,9 +9304,9 @@ function init_app() {
                     const vrmButtons = document.getElementById('vrm-floating-buttons');
                     console.log('[猫娘切换] VRM按钮检查 - 存在:', !!vrmButtons);
                     if (vrmButtons) {
-                        vrmButtons.style.setProperty('display', 'flex', 'important');
-                        vrmButtons.style.visibility = 'visible';
-                        vrmButtons.style.opacity = '1';
+                        vrmButtons.style.removeProperty('display');
+                        vrmButtons.style.removeProperty('visibility');
+                        vrmButtons.style.removeProperty('opacity');
                         console.log('[猫娘切换] VRM按钮已设置为可见');
                     } else {
                         console.warn('[猫娘切换] ⚠️ VRM浮动按钮不存在，尝试重新创建');

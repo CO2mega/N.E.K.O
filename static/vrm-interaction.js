@@ -911,6 +911,7 @@ class VRMInteraction {
         if (!this.manager.renderer || !this.manager.currentModel) return;
 
         const canvas = this.manager.renderer.domElement;
+        const useUiLoopVisibility = () => typeof this.manager._shouldShowVrmLockIcon === 'function';
 
         // 只查找 VRM 专用 ID
         let buttonsContainer = document.getElementById('vrm-floating-buttons');
@@ -942,13 +943,16 @@ class VRMInteraction {
                 window.live2dManager.isFocusing = true;
             }
 
-            // 显示浮动按钮（位置由 _startUIUpdateLoop 自动更新）
-            currentButtonsContainer.style.display = 'flex';
+            // 新版显隐逻辑由 vrm-ui-buttons 的更新循环统一接管
+            if (!useUiLoopVisibility()) {
+                // 显示浮动按钮（位置由 _startUIUpdateLoop 自动更新）
+                currentButtonsContainer.style.display = 'flex';
 
-            // 鼠标靠近时显示锁图标
-            const lockIcon = document.getElementById('vrm-lock-icon');
-            if (lockIcon) {
-                lockIcon.style.display = 'block';
+                // 鼠标靠近时显示锁图标
+                const lockIcon = document.getElementById('vrm-lock-icon');
+                if (lockIcon) {
+                    lockIcon.style.display = 'block';
+                }
             }
 
             // 清除隐藏定时器（按钮显示时不需要隐藏）
@@ -1017,13 +1021,15 @@ class VRMInteraction {
                     window.live2dManager.isFocusing = false;
                 }
 
-                const currentButtonsContainer = document.getElementById('vrm-floating-buttons');
-                if (currentButtonsContainer) {
-                    currentButtonsContainer.style.display = 'none';
-                }
+                if (!useUiLoopVisibility()) {
+                    const currentButtonsContainer = document.getElementById('vrm-floating-buttons');
+                    if (currentButtonsContainer) {
+                        currentButtonsContainer.style.display = 'none';
+                    }
 
-                if (lockIcon && !lockIcon.dataset.clickProtection) {
-                    lockIcon.style.display = 'none';
+                    if (lockIcon && !lockIcon.dataset.clickProtection) {
+                        lockIcon.style.display = 'none';
+                    }
                 }
 
                 this._hideButtonsTimer = null;
@@ -1113,7 +1119,9 @@ class VRMInteraction {
         if (this.manager.currentModel && !this.checkLocked()) {
             setTimeout(() => {
                 showButtons();
-                // 不再隐藏按钮，保持一直显示
+                if (!useUiLoopVisibility()) {
+                    startHideTimer();
+                }
             }, 100);
         }
     }

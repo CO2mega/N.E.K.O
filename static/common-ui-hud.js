@@ -220,7 +220,7 @@ window.AgentHUD.createAgentTaskHUD = function () {
         backdropFilter: 'saturate(180%) blur(20px)',
         WebkitBackdropFilter: 'saturate(180%) blur(20px)',
         borderRadius: '8px',
-        padding: '16px',
+        padding: '0',
         border: '1px solid rgba(255, 255, 255, 0.18)',
         boxShadow: '0 2px 4px rgba(0,0,0,0.04), 0 8px 16px rgba(0,0,0,0.08), 0 16px 32px rgba(0,0,0,0.04)',
         color: '#333',
@@ -232,10 +232,10 @@ window.AgentHUD.createAgentTaskHUD = function () {
         gap: '12px',
         pointerEvents: 'auto',
         overflowY: 'auto',
-        transition: 'opacity 0.3s ease, transform 0.3s ease, box-shadow 0.2s ease, width 0.3s ease, padding 0.3s ease, max-height 0.3s ease',
+        transition: 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, width 0.4s cubic-bezier(0.16, 1, 0.3, 1), padding 0.4s ease, max-height 0.4s ease',
         cursor: 'move',
         userSelect: 'none',
-        willChange: 'transform',
+        willChange: 'transform, width',
         touchAction: 'none'
     });
 
@@ -252,12 +252,12 @@ window.AgentHUD.createAgentTaskHUD = function () {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '12px 16px',
-        margin: '-16px -16px 16px -16px',
+        margin: '0',
         backgroundColor: 'rgba(255, 255, 255, 0.85)',
         borderTopLeftRadius: '8px',
         borderTopRightRadius: '8px',
         borderBottom: '1px solid rgba(0, 0, 0, 0.08)',
-        transition: 'padding 0.3s ease, margin 0.3s ease, border-color 0.3s ease, border-radius 0.3s ease, background-color 0.3s ease'
+        transition: 'padding 0.4s ease, margin 0.4s ease, border-color 0.4s ease, border-radius 0.4s ease, background-color 0.4s ease'
     });
 
     const title = document.createElement('div');
@@ -328,42 +328,64 @@ window.AgentHUD.createAgentTaskHUD = function () {
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
+        padding: '0 16px 16px 16px',
         maxHeight: 'calc(60vh - 80px)',
         overflowY: 'auto',
-        transition: 'max-height 0.3s ease, opacity 0.3s ease, width 0.3s ease'
+        transition: 'max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease'
     });
 
     // 整体折叠逻辑 (key v2: reset stale collapsed state)
     const hudCollapsedKey = 'agent-task-hud-collapsed-v2';
     const applyHudCollapsed = (collapsed) => {
+        if (!collapsed && hud.style.display !== 'none') {
+            // Check edge collision for smooth unfolding direction towards the left
+            const rect = hud.getBoundingClientRect();
+            if (hud.style.left && hud.style.left !== 'auto') {
+                const currentLeft = parseFloat(hud.style.left) || rect.left;
+                if (currentLeft + 320 > window.innerWidth) {
+                    // It will overflow right. Convert left anchor to right anchor
+                    const currentRight = window.innerWidth - rect.right;
+                    if (window.innerWidth - currentRight - 320 > 0) {
+                        hud.style.right = currentRight + 'px';
+                        hud.style.left = 'auto'; // let it expand to the left
+                    } else {
+                        hud.style.left = '0px';
+                        hud.style.right = 'auto';
+                    }
+                }
+            }
+        }
+
         if (collapsed) {
             hud.style.width = 'auto';
-            hud.style.padding = '12px 16px'; // 保持和展开时 header 内容一样的 padding，更匀称
-            hud.style.gap = '0'; // 折叠时移除外层 gap，避免底部多出一截
-            title.style.display = 'none';
-            stats.style.display = 'flex';
-            header.style.padding = '0';
-            header.style.margin = '0'; // 移除特意为拉伸背景设置的负 margin
-            header.style.backgroundColor = 'transparent';
+            hud.style.gap = '0'; 
+            
+            header.style.padding = '12px 16px';
+            header.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
             header.style.borderBottom = 'none';
             header.style.justifyContent = 'center';
-            taskList.style.display = 'none'; // 彻底隐藏任务列表容器，避免占据哪怕 1px 的高度和 gap
+            header.style.borderRadius = '8px'; // round all corners
+            
+            title.style.display = 'none';
+            stats.style.display = 'flex';
+            taskList.style.display = 'none'; 
+            taskList.style.opacity = '0';
             minimizeBtn.style.transform = 'rotate(-90deg)';
         } else {
             hud.style.width = '320px';
-            hud.style.padding = '16px';
-            hud.style.gap = '12px'; // 恢复外层 gap
-            title.style.display = '';
-            stats.style.display = 'flex';
+            hud.style.gap = '12px'; 
+            
             header.style.padding = '12px 16px';
-            header.style.margin = '-16px -16px 16px -16px'; // 恢复拉伸背景的负 margin
             header.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
             header.style.borderBottom = '1px solid rgba(0, 0, 0, 0.08)';
             header.style.justifyContent = 'space-between';
-            taskList.style.display = 'flex'; // 恢复任务列表容器
+            header.style.borderRadius = '8px 8px 0 0'; // round only top corners
+            
+            title.style.display = '';
+            stats.style.display = 'flex';
+            taskList.style.display = 'flex'; 
             taskList.style.maxHeight = 'calc(60vh - 80px)';
             taskList.style.opacity = '1';
-            taskList.style.overflow = '';
             taskList.style.overflowY = 'auto';
             minimizeBtn.style.transform = 'rotate(0deg)';
         }

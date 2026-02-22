@@ -14,8 +14,9 @@ VRMManager.prototype.setupFloatingButtons = function () {
         this._uiWindowHandlers = [];
     }
     if (this._uiWindowHandlers.length > 0) {
-        this._uiWindowHandlers.forEach(({ event, handler }) => {
-            window.removeEventListener(event, handler);
+        this._uiWindowHandlers.forEach(({ event, handler, target, options }) => {
+            const eventTarget = target || window;
+            eventTarget.removeEventListener(event, handler, options);
         });
         this._uiWindowHandlers = [];
     }
@@ -77,7 +78,7 @@ VRMManager.prototype.setupFloatingButtons = function () {
             buttonsContainer.style.right = '';
             buttonsContainer.style.left = '';
             buttonsContainer.style.top = '';
-            buttonsContainer.style.display = 'flex';
+            // 桌面端显示由更新循环中的距离判定控制，这里不强制显示
         }
     };
     applyResponsiveFloatingLayout();
@@ -87,6 +88,20 @@ VRMManager.prototype.setupFloatingButtons = function () {
         if (isLocked) return true;
 
         const mouse = this._vrmMousePos;
+        if (!mouse) return false;
+
+        // 锁图标命中使用整块矩形（包含中间透明区域），并向外扩展若干像素增加吸附手感
+        if (this._vrmLockIcon) {
+            const rect = this._vrmLockIcon.getBoundingClientRect();
+            const expandPx = 8;
+            const inExpandedRect =
+                mouse.x >= rect.left - expandPx &&
+                mouse.x <= rect.right + expandPx &&
+                mouse.y >= rect.top - expandPx &&
+                mouse.y <= rect.bottom + expandPx;
+            if (inExpandedRect) return true;
+        }
+
         const centerX = this._vrmModelCenterX;
         const centerY = this._vrmModelCenterY;
         if (!mouse || typeof centerX !== 'number' || typeof centerY !== 'number') return false;
@@ -106,9 +121,10 @@ VRMManager.prototype.setupFloatingButtons = function () {
             y: typeof e.clientY === 'number' ? e.clientY : 0
         };
     };
-    this._uiWindowHandlers.push({ event: 'mousemove', handler: updateMousePosition });
-    window.addEventListener('mousemove', updateMousePosition, { passive: true });
-    this._uiWindowHandlers.push({ event: 'resize', handler: applyResponsiveFloatingLayout });
+    const mouseListenerOptions = { passive: true, capture: true };
+    this._uiWindowHandlers.push({ event: 'mousemove', handler: updateMousePosition, target: window, options: mouseListenerOptions });
+    window.addEventListener('mousemove', updateMousePosition, mouseListenerOptions);
+    this._uiWindowHandlers.push({ event: 'resize', handler: applyResponsiveFloatingLayout, target: window });
     window.addEventListener('resize', applyResponsiveFloatingLayout);
 
     const iconVersion = window.APP_VERSION ? `?v=${window.APP_VERSION}` : '?v=1.0.0';
