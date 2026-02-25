@@ -10,7 +10,6 @@
 """
 import re
 import locale
-import logging
 import threading
 import asyncio
 import os

@@ -10,7 +10,6 @@ Each session tracks:
 Sessions are completely independent from the conversation agent.
 """
 
-import logging
 import time
 import uuid
 from dataclasses import dataclass, field

@@ -9,12 +9,10 @@ N.E.K.O. 端口探测与健康校验工具。
 """
 
 import json
-import logging
 import os
 import socket
 import sys
 import tempfile
-import time
 from typing import Optional
 
 from utils.logger_config import get_module_logger

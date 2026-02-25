@@ -4,7 +4,6 @@ API配置加载器
 从JSON文件加载API服务商配置和默认模型配置
 """
 import json
-import logging
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Any, Optional

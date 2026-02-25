@@ -5,7 +5,6 @@ from config import TIME_ORIGINAL_TABLE_NAME, TIME_COMPRESSED_TABLE_NAME
 from utils.config_manager import get_config_manager
 from utils.logger_config import get_module_logger
 from datetime import datetime
-import logging
 import os
 
 logger = get_module_logger(__name__, "Memory")

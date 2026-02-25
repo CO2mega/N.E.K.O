@@ -9,7 +9,6 @@ Handles agent-related endpoints including:
 - Admin control
 """
 
-import logging
 import time
 
 from utils.logger_config import get_module_logger

@@ -10,7 +10,6 @@ Handles VRM model-related endpoints including:
 """
 
 import json
-import logging
 import re
 from pathlib import Path
 

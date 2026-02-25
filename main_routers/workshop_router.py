@@ -12,7 +12,6 @@ Handles Steam Workshop-related endpoints including:
 import os
 import json
 import time
-import logging
 import asyncio
 import threading
 from datetime import datetime
@@ -1608,7 +1607,6 @@ async def prepare_workshop_upload(request: Request):
     """
     try:
         import shutil
-        import tempfile
         import uuid
         from utils.frontend_utils import find_model_directory
         

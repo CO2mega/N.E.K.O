@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 from typing import Any
 
 from config import AGENT_MQ_PORT

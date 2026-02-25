@@ -13,7 +13,6 @@ import os
 import sys
 import asyncio
 import base64
-import logging
 import re
 import time
 from collections import deque

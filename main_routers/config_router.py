@@ -10,10 +10,8 @@ Handles configuration-related API endpoints including:
 """
 
 import json
-import logging
 import os
 
-from pathlib import Path
 from fastapi import APIRouter, Request
 
 from .shared_state import get_config_manager, get_steamworks, get_session_manager, get_initialize_character_data

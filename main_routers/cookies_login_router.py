@@ -6,7 +6,6 @@ Handles authentication-related endpoints with strict validation and
 unified logic for credential management.
 """
 
-import logging
 import re
 from typing import Dict, Optional
 

@@ -11,7 +11,6 @@ Handles WebSocket endpoints including:
 import json
 import uuid
 import asyncio
-import logging
 
 from utils.logger_config import get_module_logger
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect

@@ -4,7 +4,6 @@ Processor module — DISABLED.
 MCP Router 功能已移除。此模块仅保留类骨架以避免导入报错。
 """
 from typing import Dict, Any, Optional
-import logging
 
 from utils.logger_config import get_module_logger
 

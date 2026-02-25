@@ -11,7 +11,6 @@ Handles character (catgirl) management endpoints including:
 import json
 import io
 import os
-import logging
 import asyncio
 import copy
 import base64

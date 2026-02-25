@@ -8,7 +8,6 @@ fd 轮询（add_reader），而该机制在 Windows ProactorEventLoop 上不可�
 """
 
 import asyncio
-import logging
 import os
 import threading
 import time

@@ -22,9 +22,9 @@ def _configure_browser_logging() -> None:
 
     Disk logs still get WARNING+ entries; real-time progress uses print.
     """
-    for name in ("service", "browser_use.browser", "browser_use.llm"):
+    for name in ("browser_use.llm"):
         logging.getLogger(name).setLevel(logging.ERROR)
-    for name in ("browser_use", "browser_use.agent"):
+    for name in ("browser_use", "service", "browser_use.browser", "browser_use.agent"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 

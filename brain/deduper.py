@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 import asyncio
 from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, InternalServerError, RateLimitError

@@ -1,5 +1,4 @@
-from typing import Dict, Any, List
-import logging
+from typing import Dict, List
 import asyncio
 from openai import AsyncOpenAI, APIConnectionError, InternalServerError, RateLimitError
 from config import get_extra_body

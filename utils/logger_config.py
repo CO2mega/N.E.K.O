@@ -11,10 +11,9 @@
 import os
 import sys
 import logging
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, timedelta
-import shutil
 
 from config import APP_NAME
 
