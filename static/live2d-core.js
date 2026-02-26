@@ -451,8 +451,8 @@ class Live2DManager {
                     window.innerWidth * 1.2 / 2000
                 );
                 this.currentModel.scale.set(scale);
-                this.currentModel.x = this.pixi_app.renderer.width * 0.5;
-                this.currentModel.y = this.pixi_app.renderer.height * 0.28;
+                this.currentModel.x = this.pixi_app.renderer.screen.width * 0.5;
+                this.currentModel.y = this.pixi_app.renderer.screen.height * 0.28;
             } else {
                 this.currentModel.anchor.set(0.65, 0.75);
                 const scale = Math.min(
@@ -461,8 +461,8 @@ class Live2DManager {
                     (window.innerWidth * 0.6) / 7000
                 );
                 this.currentModel.scale.set(scale);
-                this.currentModel.x = this.pixi_app.renderer.width;
-                this.currentModel.y = this.pixi_app.renderer.height;
+                this.currentModel.x = this.pixi_app.renderer.screen.width;
+                this.currentModel.y = this.pixi_app.renderer.screen.height;
             }
 
             console.log('模型位置已复位到初始状态');

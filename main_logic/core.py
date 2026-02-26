@@ -511,10 +511,15 @@ class LLMSessionManager:
         self.session_closed_by_server = True
         
         if message:
+            message_lower = message.lower()
             if '欠费' in message:
                 await self.send_status("💥 智谱API触发欠费bug。请考虑充值1元。")
             elif 'standing' in message:
                 await self.send_status("💥 阿里API已欠费。")
+            elif 'policy violation' in message_lower or '1008' in message:
+                await self.send_status("💥 免费语音模型限额已耗尽（1008），请升级或明天再试。")
+            elif '429' in message or 'quota' in message_lower or 'too many requests' in message_lower:
+                await self.send_status("💥 API达到限额或请求过于频繁(429)，请稍后再试。")
             else:
                 await self.send_status(message)
         logger.info("💥 Session closed by API Server.")
@@ -2434,8 +2439,25 @@ class LLMSessionManager:
                     await asyncio.sleep(0.01)
                     continue
 
-                if isinstance(data, tuple) and len(data) == 2 and data[0] == "__ready__":
-                    continue
+                if isinstance(data, tuple) and len(data) == 2:
+                    if data[0] == "__ready__":
+                        continue
+                    elif data[0] == "__error__":
+                        error_msg = data[1]
+                        logger.error(f"TTS Worker Error: {error_msg}")
+                        error_msg_lower = error_msg.lower()
+                        
+                        # 识别免费TTS配额限制
+                        if "policy violation" in error_msg_lower or "1008" in error_msg:
+                            if "daily connection time limit" in error_msg_lower:
+                                user_msg = "💥 免费TTS限额已耗尽（今日连接时长超限），请明天再试或升级。"
+                            else:
+                                user_msg = "💥 免费TTS限额已耗尽，请明天再试或升级。"
+                        else:
+                            user_msg = f"TTS服务连接失败: {error_msg}"
+                            
+                        asyncio.create_task(self.send_status(user_msg))
+                        continue
 
                 size = len(data) if isinstance(data, (bytes, bytearray)) else f"type={type(data).__name__}"
                 logger.debug(f"🎧 handler dequeued audio: {size}, qsize≈{q.qsize()}")

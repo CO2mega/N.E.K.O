@@ -932,8 +932,8 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
             window.innerWidth * 1.2 / 2000
         );
         model.scale.set(scale);
-        model.x = this.pixi_app.renderer.width * 0.5;
-        model.y = this.pixi_app.renderer.height * 0.28;
+        model.x = this.pixi_app.renderer.screen.width * 0.5;
+        model.y = this.pixi_app.renderer.screen.height * 0.28;
     } else {
         model.anchor.set(0.65, 0.75);
         if (preferences && preferences.scale && preferences.position) {
@@ -943,8 +943,8 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
             const posY = Number(preferences.position.y);
 
             // 当前渲染器尺寸
-            const rendererWidth = this.pixi_app.renderer.width;
-            const rendererHeight = this.pixi_app.renderer.height;
+            const rendererWidth = this.pixi_app.renderer.screen.width;
+            const rendererHeight = this.pixi_app.renderer.screen.height;
 
             // 使用渲染器逻辑尺寸做归一化（renderer 不再自动 resize，尺寸等价于稳定的屏幕分辨率）
             const currentScreenW = this.pixi_app.renderer.screen.width;
@@ -1013,8 +1013,8 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
                 (window.innerWidth * 0.6) / 7000
             );
             model.scale.set(scale);
-            model.x = this.pixi_app.renderer.width;
-            model.y = this.pixi_app.renderer.height;
+            model.x = this.pixi_app.renderer.screen.width;
+            model.y = this.pixi_app.renderer.screen.height;
         }
     }
 };
