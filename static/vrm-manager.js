@@ -768,10 +768,10 @@ class VRMManager {
         }
 
 
-        // 设置画布初始状态为透明，并添加 CSS 过渡效果
+        // 先无过渡地立即隐藏画布，避免旧过渡导致加载期闪帧
         if (this.renderer && this.renderer.domElement) {
+            this.renderer.domElement.style.transition = 'none';
             this.renderer.domElement.style.opacity = '0';
-            this.renderer.domElement.style.transition = 'opacity 1.0s ease-in-out';
         }
 
         // 加载模型
@@ -853,44 +853,39 @@ class VRMManager {
                 requestAnimationFrame(() => {
                     if (!this._isLoadTokenActive(loadToken)) return;
                     if (this.renderer && this.renderer.domElement) {
+                        this.renderer.domElement.style.transition = 'opacity 1.0s ease-in-out';
                         this.renderer.domElement.style.opacity = '1';
                     }
                 });
             }
         };
 
-        // 自动播放待机动画
+        // 加载待机动画（作为 Promise，与场景稳定性并行等待）
+        let animationReady = Promise.resolve();
         if (options.autoPlay !== false) {
-            const tryPlayAnimation = async (retries = 10) => {
-                if (!this.currentModel || !this.currentModel.vrm) {
-                    if (this._retryTimerId) {
-                        clearTimeout(this._retryTimerId);
-                        this._retryTimerId = null;
-                    }
-                    return;
-                }
+            animationReady = (async () => {
+                if (!this.currentModel || !this.currentModel.vrm) return;
 
-                if (!this.animation) {
-                    this._initModules();
-                    if (!this.animation && typeof window.VRMAnimation === 'undefined') {
-                        if (retries > 0) {
-                            if (this._retryTimerId) {
-                                clearTimeout(this._retryTimerId);
-                            }
-                            // 将 setTimeout 的返回值赋值给 _retryTimerId，以便 dispose() 可以清理
-                            this._retryTimerId = setTimeout(() => {
-                                this._retryTimerId = null; // 回调执行时清除引用
-                                if (!this._isLoadTokenActive(loadToken)) return;
-                                tryPlayAnimation(retries - 1);
-                            }, 100);
-                            return;
-                        } else {
-                            console.warn('[VRM Manager] VRMAnimation 模块未加载，跳过自动播放');
-                            this._retryTimerId = null;
-                            showAndFadeIn();
-                            return;
-                        }
+                let retries = 10;
+                while (retries > 0) {
+                    if (!this._isLoadTokenActive(loadToken)) return;
+                    if (!this.currentModel || !this.currentModel.vrm) return;
+
+                    if (!this.animation) this._initModules();
+                    if (this.animation) break;
+
+                    if (typeof window.VRMAnimation !== 'undefined') {
+                        this._initModules();
+                        break;
                     }
+
+                    await new Promise(resolve => {
+                        this._retryTimerId = setTimeout(() => {
+                            this._retryTimerId = null;
+                            resolve();
+                        }, 100);
+                    });
+                    retries--;
                 }
 
                 if (this._retryTimerId) {
@@ -898,32 +893,21 @@ class VRMManager {
                     this._retryTimerId = null;
                 }
 
-                if (this.animation) {
-                    try {
-                        await this.playVRMAAnimation(DEFAULT_LOOP_ANIMATION, {
-                            loop: true,
-                            immediate: true,
-                            isIdle: true
-                        });
-                        showAndFadeIn();
-                    } catch (err) {
-                        console.warn('[VRM Manager] 自动播放失败，强制显示:', err);
-                        showAndFadeIn();
-                    }
-                } else {
-                    console.warn('[VRM Manager] animation 模块初始化失败，跳过自动播放');
-                    showAndFadeIn();
+                if (!this.animation) {
+                    console.warn('[VRM Manager] VRMAnimation 模块未加载，跳过自动播放');
+                    return;
                 }
-            };
 
-            // 将初始 setTimeout 的返回值赋值给 _retryTimerId，以便 dispose() 可以清理
-            this._retryTimerId = setTimeout(() => {
-                this._retryTimerId = null; // 回调执行时清除引用
-                if (!this._isLoadTokenActive(loadToken)) return;
-                tryPlayAnimation();
-            }, 100);
-        } else {
-            showAndFadeIn();
+                try {
+                    await this.playVRMAAnimation(DEFAULT_LOOP_ANIMATION, {
+                        loop: true,
+                        immediate: true,
+                        isIdle: true
+                    });
+                } catch (err) {
+                    console.warn('[VRM Manager] 自动播放失败:', err);
+                }
+            })();
         }
 
         if (this.expression) {
@@ -932,10 +916,14 @@ class VRMManager {
         if (this.setupFloatingButtons) {
             this.setupFloatingButtons();
         }
+
+        // 同时等待场景稳定和待机动画加载完成，确保模型不以 T-pose 显示
         this._loadState = 'settling';
-        if (result && result.vrm && result.vrm.scene && this._isLoadTokenActive(loadToken)) {
-            await this._waitForSceneStability(result.vrm.scene, loadToken);
-        }
+        const stabilityPromise = (result && result.vrm && result.vrm.scene && this._isLoadTokenActive(loadToken))
+            ? this._waitForSceneStability(result.vrm.scene, loadToken)
+            : Promise.resolve();
+        await Promise.all([stabilityPromise, animationReady]);
+
         if (this._isLoadTokenActive(loadToken)) {
             this._loadState = 'ready';
             this._isModelReadyForInteraction = true;
@@ -1028,6 +1016,11 @@ class VRMManager {
      */
     async dispose() {
         console.log('[VRM Manager] 开始完整清理 VRM 资源...');
+
+        // Invalidate any in-flight loadModel() async callbacks
+        ++this._activeLoadToken;
+        this._loadState = 'idle';
+        this._isModelReadyForInteraction = false;
 
         // 1. 取消动画循环（最关键）
         if (this._animationFrameId) {

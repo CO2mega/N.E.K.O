@@ -45,8 +45,14 @@
             opensLeft = true;
             if (triggerIcon) triggerIcon.style.transform = 'rotate(180deg)';
         } else {
+            popup.style.left = popup.style.left || '100%';
+            popup.style.right = 'auto';
+            popup.style.marginLeft = `${gap}px`;
+            popup.style.marginRight = '0';
             if (triggerIcon) triggerIcon.style.transform = 'rotate(0deg)';
         }
+
+        popup.dataset.opensLeft = String(opensLeft);
 
         // Vertical overflow handling.
         popupRect = popup.getBoundingClientRect();

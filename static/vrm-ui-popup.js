@@ -1427,8 +1427,10 @@ VRMManager.prototype.closePopupById = function (buttonId) {
 
     if (buttonId === 'agent') window.dispatchEvent(new CustomEvent('live2d-agent-popup-closed'));
 
-    popup.style.opacity = '0'; popup.style.transform = 'translateX(-10px)';
-    setTimeout(() => popup.style.display = 'none', VRM_POPUP_ANIMATION_DURATION_MS);
+    popup.style.opacity = '0';
+    const closeOpensLeft = popup.dataset.opensLeft === 'true';
+    popup.style.transform = closeOpensLeft ? 'translateX(10px)' : 'translateX(-10px)';
+    setTimeout(() => { popup.style.display = 'none'; delete popup.dataset.opensLeft; }, VRM_POPUP_ANIMATION_DURATION_MS);
 
     // 更新按钮状态
     if (typeof this.setButtonActive === 'function') {
@@ -1512,7 +1514,9 @@ VRMManager.prototype.showPopup = function (buttonId, popup) {
     if (buttonId === 'agent' && !isVisible) window.dispatchEvent(new CustomEvent('live2d-agent-popup-opening'));
 
     if (isVisible) {
-        popup.style.opacity = '0'; popup.style.transform = 'translateX(-10px)';
+        popup.style.opacity = '0';
+        const closingOpensLeft = popup.dataset.opensLeft === 'true';
+        popup.style.transform = closingOpensLeft ? 'translateX(10px)' : 'translateX(-10px)';
         const triggerIcon = document.querySelector(`.vrm-trigger-icon-${buttonId}`);
         if (triggerIcon) triggerIcon.style.transform = 'rotate(0deg)';
         if (buttonId === 'agent') window.dispatchEvent(new CustomEvent('live2d-agent-popup-closed'));
@@ -1525,6 +1529,7 @@ VRMManager.prototype.showPopup = function (buttonId, popup) {
         // 存储 timeout ID，以便在快速重新打开时能够清除
         const hideTimeoutId = setTimeout(() => {
             popup.style.display = 'none';
+            delete popup.dataset.opensLeft;
             if (popupUi && typeof popupUi.resetPopupPosition === 'function') {
                 popupUi.resetPopupPosition(popup, { left: '100%', top: '0' });
             } else {

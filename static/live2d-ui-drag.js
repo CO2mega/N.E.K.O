@@ -114,9 +114,11 @@ Live2DManager.prototype.closePopupById = function (buttonId) {
     }
 
     popup.style.opacity = '0';
-    popup.style.transform = 'translateX(-10px)';
+    const closeOpensLeft = popup.dataset.opensLeft === 'true';
+    popup.style.transform = closeOpensLeft ? 'translateX(10px)' : 'translateX(-10px)';
     setTimeout(() => {
         popup.style.display = 'none';
+        delete popup.dataset.opensLeft;
     }, 200);
 
     const buttonEntry = this._floatingButtons[buttonId];
@@ -623,7 +625,8 @@ Live2DManager.prototype.showPopup = function (buttonId, popup) {
 
         // 如果已经显示，则隐藏
         popup.style.opacity = '0';
-        popup.style.transform = 'translateX(-10px)';
+        const closingOpensLeft = popup.dataset.opensLeft === 'true';
+        popup.style.transform = closingOpensLeft ? 'translateX(10px)' : 'translateX(-10px)';
         const triggerIcon = document.querySelector(`.live2d-trigger-icon-${buttonId}`);
         if (triggerIcon) triggerIcon.style.transform = 'rotate(0deg)';
 
@@ -634,6 +637,7 @@ Live2DManager.prototype.showPopup = function (buttonId, popup) {
 
         setTimeout(() => {
             popup.style.display = 'none';
+            delete popup.dataset.opensLeft;
             // 重置位置和样式
             if (popupUi && typeof popupUi.resetPopupPosition === 'function') {
                 popupUi.resetPopupPosition(popup, { left: '100%', top: '0' });
@@ -710,12 +714,13 @@ Live2DManager.prototype.showPopup = function (buttonId, popup) {
         if (buttonId !== 'settings' && buttonId !== 'agent' && buttonId !== 'mic' && buttonId !== 'screen') {
             this._popupTimers[buttonId] = setTimeout(() => {
                 popup.style.opacity = '0';
-                const opensLeft = popup.style.right === '0px' || popup.style.right === '0';
+                const opensLeft = popup.dataset.opensLeft === 'true';
                 popup.style.transform = opensLeft ? 'translateX(10px)' : 'translateX(-10px)';
                 const triggerIcon = document.querySelector(`.live2d-trigger-icon-${buttonId}`);
                 if (triggerIcon) triggerIcon.style.transform = 'rotate(0deg)';
                 setTimeout(() => {
                     popup.style.display = 'none';
+                    delete popup.dataset.opensLeft;
                     // 重置位置
                     if (popupUi && typeof popupUi.resetPopupPosition === 'function') {
                         popupUi.resetPopupPosition(popup, { left: '100%', top: '0' });

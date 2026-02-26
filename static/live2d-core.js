@@ -200,9 +200,13 @@ class Live2DManager {
 
         this._initPIXIPromise = (async () => {
             try {
+                // 等待一帧让页面布局稳定，避免读到 CSS 未完全生效时的临时尺寸
+                await new Promise(resolve => requestAnimationFrame(resolve));
+
                 this.pixi_app = new PIXI.Application({
                     view: canvas,
-                    resizeTo: container,
+                    width: container.clientWidth,
+                    height: container.clientHeight,
                     ...defaultOptions,
                     ...options
                 });
@@ -222,6 +226,39 @@ class Live2DManager {
                 if (window.targetFrameRate && this.pixi_app.ticker) {
                     this.pixi_app.ticker.maxFPS = window.targetFrameRate;
                 }
+
+                // 仅在屏幕分辨率真正变化（换显示器/跨屏移动）时 resize 渲染器
+                // DevTools、输入法、窗口拖拽等临时视口变化一律忽略，节省 GPU 开销
+                let lastScreenW = window.screen.width;
+                let lastScreenH = window.screen.height;
+                this._screenChangeHandler = () => {
+                    const sw = window.screen.width;
+                    const sh = window.screen.height;
+                    if (sw === lastScreenW && sh === lastScreenH) return;
+                    lastScreenW = sw;
+                    lastScreenH = sh;
+
+                    const prevW = this.pixi_app.renderer.screen.width;
+                    const prevH = this.pixi_app.renderer.screen.height;
+                    const el = document.getElementById(containerId);
+                    const newW = el ? el.clientWidth : prevW;
+                    const newH = el ? el.clientHeight : prevH;
+
+                    this.pixi_app.renderer.resize(newW, newH);
+
+                    if (this.currentModel && prevW > 0 && prevH > 0) {
+                        const wRatio = newW / prevW;
+                        const hRatio = newH / prevH;
+                        this.currentModel.x *= wRatio;
+                        this.currentModel.y *= hRatio;
+                        const areaRatio = Math.sqrt(wRatio * hRatio);
+                        this.currentModel.scale.x *= areaRatio;
+                        this.currentModel.scale.y *= areaRatio;
+                    }
+                    console.log('[Live2D Core] 屏幕分辨率变化，渲染器已 resize:', { prevW, prevH, newW, newH });
+                };
+                window.addEventListener('resize', this._screenChangeHandler);
+
                 console.log('[Live2D Core] PIXI.Application 初始化成功，stage 已创建');
                 return this.pixi_app;
             } catch (error) {
@@ -249,6 +286,10 @@ class Live2DManager {
     async rebuildPIXI(canvasId, containerId, options = {}) {
         if (this._initPIXIPromise) {
             await this._initPIXIPromise;
+        }
+        if (this._screenChangeHandler) {
+            window.removeEventListener('resize', this._screenChangeHandler);
+            this._screenChangeHandler = null;
         }
         if (this.pixi_app && this.pixi_app.destroy) {
             try {
@@ -402,10 +443,8 @@ class Live2DManager {
         }
 
         try {
-            this.currentModel.anchor.set(0.65, 0.75);
-            // 根据移动端/桌面端重置到默认位置和缩放
             if (isMobileWidth()) {
-                // 移动端默认设置
+                this.currentModel.anchor.set(0.5, 0.1);
                 const scale = Math.min(
                     0.5,
                     window.innerHeight * 1.3 / 4000,
@@ -415,24 +454,24 @@ class Live2DManager {
                 this.currentModel.x = this.pixi_app.renderer.width * 0.5;
                 this.currentModel.y = this.pixi_app.renderer.height * 0.28;
             } else {
-                // 桌面端默认设置（右下角）
+                this.currentModel.anchor.set(0.65, 0.75);
                 const scale = Math.min(
                     0.5,
                     (window.innerHeight * 0.75) / 7000,
                     (window.innerWidth * 0.6) / 7000
                 );
                 this.currentModel.scale.set(scale);
-                this.currentModel.x = this.pixi_app.renderer.width * 0.65;
-                this.currentModel.y = this.pixi_app.renderer.height * 0.6;
+                this.currentModel.x = this.pixi_app.renderer.width;
+                this.currentModel.y = this.pixi_app.renderer.height;
             }
 
             console.log('模型位置已复位到初始状态');
 
-            // 复位后自动保存位置
+            // 复位后自动保存位置（viewport 基准与 applyModelSettings / _savePositionAfterInteraction 一致，使用 renderer.screen）
             if (this._lastLoadedModelPath) {
                 const viewport = {
-                    width: window.screen.width,
-                    height: window.screen.height
+                    width: this.pixi_app.renderer.screen.width,
+                    height: this.pixi_app.renderer.screen.height
                 };
                 const saveSuccess = await this.saveUserPreferences(
                     this._lastLoadedModelPath,

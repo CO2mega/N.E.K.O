@@ -300,8 +300,7 @@ Live2DManager.prototype._configureLoadedModel = async function(model, modelPath,
 
     // 应用位置和缩放设置
     this.applyModelSettings(model, options);
-    model.visible = false;
-    model.renderable = false;
+    model.alpha = 0;
     
     // 注意：用户偏好参数的应用延迟到模型目录参数加载完成后，
     // 以确保正确的优先级顺序（模型目录参数 > 用户偏好参数）
@@ -473,14 +472,9 @@ Live2DManager.prototype._configureLoadedModel = async function(model, modelPath,
             console.warn('[Live2D Model] 初次加载边界校正失败:', e);
         }
     }
-    model.renderable = true;
-    model.visible = true;
+    model.alpha = 1;
     this._isModelReadyForInteraction = true;
     this._modelLoadState = 'ready';
-    // 模型稳定并可见后再启用 resize 吸附检测，避免初始化期布局变化触发漂移
-    if (options.dragEnabled !== false) {
-        this.setupResizeSnapDetection();
-    }
 
     // 调用回调函数
     if (this.onModelLoaded) {
@@ -952,9 +946,9 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
             const rendererWidth = this.pixi_app.renderer.width;
             const rendererHeight = this.pixi_app.renderer.height;
 
-            // 使用 screen 尺寸做跨分辨率归一化（不受 F12、输入法等临时视口变化影响）
-            const currentScreenW = window.screen.width;
-            const currentScreenH = window.screen.height;
+            // 使用渲染器逻辑尺寸做归一化（renderer 不再自动 resize，尺寸等价于稳定的屏幕分辨率）
+            const currentScreenW = this.pixi_app.renderer.screen.width;
+            const currentScreenH = this.pixi_app.renderer.screen.height;
             const hasValidScreen = Number.isFinite(currentScreenW) && Number.isFinite(currentScreenH) &&
                 currentScreenW > 0 && currentScreenH > 0;
 
@@ -1009,8 +1003,8 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
                 }
             } else {
                 console.warn('保存的位置设置无效，使用默认值');
-                model.x = rendererWidth * 0.65;
-                model.y = rendererHeight * 0.6;
+                model.x = rendererWidth;
+                model.y = rendererHeight;
             }
         } else {
             const scale = Math.min(
@@ -1019,8 +1013,8 @@ Live2DManager.prototype.applyModelSettings = function(model, options) {
                 (window.innerWidth * 0.6) / 7000
             );
             model.scale.set(scale);
-            model.x = this.pixi_app.renderer.width * 0.65;
-            model.y = this.pixi_app.renderer.height * 0.6;
+            model.x = this.pixi_app.renderer.width;
+            model.y = this.pixi_app.renderer.height;
         }
     }
 };
