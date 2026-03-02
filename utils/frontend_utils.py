@@ -21,9 +21,6 @@ from datetime import datetime
 from pathlib import Path
 import httpx
 
-from utils.workshop_utils import load_workshop_config
-
-
 
 chinese_char_pattern = re.compile(r'[\u4e00-\u9fff]+')
 bracket_patterns = [re.compile(r'\(.*?\)'),
@@ -69,6 +66,19 @@ def remove_bracket(text):
     text = text.replace("（", "").replace("）", "").replace("(", "").replace(")", "")
     return text
 
+def count_words_and_chars(text: str) -> int:
+    """
+    统计混合文本长度：中文字符计1、英文单词计1
+    """
+    if not text:
+        return 0
+    count = 0
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
+    count += len(chinese_chars)
+    text_without_chinese = re.sub(r'[\u4e00-\u9fff]', ' ', text)
+    english_words = [w for w in text_without_chinese.split() if w.strip()]
+    count += len(english_words)
+    return count
 
 
 
@@ -166,7 +176,8 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
 
 def find_models():
     """
-    递归扫描 'static' 文件夹、用户文档下的 'live2d' 文件夹和用户mod路径，查找所有包含 '.model3.json' 文件的子目录。
+    递归扫描 'static' 文件夹、用户文档下的 'live2d' 文件夹、Steam创意工坊目录和用户mod路径，
+    查找所有包含 '.model3.json' 文件的子目录。
     """
     from utils.config_manager import get_config_manager
     
@@ -190,6 +201,10 @@ def find_models():
     except Exception as e:
         logging.warning(f"无法访问用户文档live2d目录: {e}")
     
+    # 添加Steam创意工坊目录
+    workshop_search_dir = _resolve_workshop_search_dir()
+    if workshop_search_dir and os.path.exists(workshop_search_dir):
+        search_dirs.append(('workshop', workshop_search_dir, '/workshop'))
     
     # 遍历所有搜索目录
     for source, search_root_dir, url_prefix in search_dirs:
@@ -224,12 +239,19 @@ def find_models():
                             # 同时更新display_name以区分
                             display_name = f"{display_name} ({source})"
                         
-                        found_models.append({
+                        model_entry = {
                             "name": final_name,
                             "display_name": display_name,
                             "path": f"{url_prefix}/{model_path}",
                             "source": source
-                        })
+                        }
+                        
+                        if source == 'workshop':
+                            path_parts = model_path.split('/')
+                            if path_parts and path_parts[0].isdigit():
+                                model_entry["item_id"] = path_parts[0]
+                        
+                        found_models.append(model_entry)
                         
                         # 优化：一旦在某个目录找到模型json，就无需再继续深入该目录的子目录
                         dirs[:] = []
@@ -328,28 +350,38 @@ def is_user_imported_model(model_path: str, config_manager=None) -> bool:
         return False
 
 
+def _resolve_workshop_search_dir() -> str:
+    """
+    获取创意工坊搜索目录
+    
+    优先级: user_mod_folder(配置) > Steam运行时路径 > user_workshop_folder(缓存文件) > default_workshop_folder(配置) > 默认workshop目录
+    """
+    from utils.config_manager import get_workshop_path
+    workshop_path = get_workshop_path()
+    if workshop_path and os.path.exists(workshop_path):
+        return workshop_path
+    return None
+
+
 def find_model_directory(model_name: str):
     """
     查找模型目录，优先在用户文档目录，其次在创意工坊目录，最后在static目录
     返回 (实际路径, URL前缀) 元组
     """
-    import re
     from utils.config_manager import get_config_manager
     
-    # 验证模型名称，只允许字母、数字、下划线、中文字符、日文字符、韩文字符、连字符和空格
-    # 防止路径遍历攻击
+    # 验证模型名称，防止路径遍历攻击
+    # 允许：字母、数字、下划线、中日韩字符、连字符、空格、括号（半角和全角）、点、逗号等常见字符
+    # 拒绝：路径分隔符 / \ 和路径遍历 ..
     if not model_name or not model_name.strip():
         logging.warning("模型名称为空")
         return (None, None)
-    if not re.match(r'^[\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\- ]+$', model_name):
-        # 使用 repr() 安全地表示模型名称，避免控制字符污染日志
+    if '..' in model_name or '/' in model_name or '\\' in model_name:
         model_name_safe = repr(model_name) if len(model_name) <= 100 else repr(model_name[:100]) + '...'
-        logging.warning(f"无效的模型名称: {model_name_safe}")
+        logging.warning(f"模型名称包含非法路径字符: {model_name_safe}")
         return (None, None)
     
-    # 从配置文件获取WORKSHOP_PATH，如果不存在则使用steam_workshop_path
-    workshop_config_data = load_workshop_config()
-    WORKSHOP_SEARCH_DIR = workshop_config_data.get("WORKSHOP_PATH", workshop_config_data.get("steam_workshop_path", workshop_config_data.get("default_workshop_folder")))
+    WORKSHOP_SEARCH_DIR = _resolve_workshop_search_dir()
     
     # 定义允许的基础目录列表
     allowed_base_dirs = []
@@ -459,9 +491,7 @@ def find_workshop_item_by_id(item_id: str) -> tuple:
         (物品路径, URL前缀) 元组，即使找不到也会返回默认值
     """
     try:
-        # 从配置文件获取WORKSHOP_PATH，如果不存在则使用steam_workshop_path或默认路径
-        workshop_config = load_workshop_config()
-        workshop_dir = workshop_config.get("WORKSHOP_PATH", workshop_config.get("steam_workshop_path", workshop_config.get("default_workshop_folder", "static")))
+        workshop_dir = _resolve_workshop_search_dir()
         
         # 如果路径不存在或为空，使用默认的static目录
         if not workshop_dir or not os.path.exists(workshop_dir):

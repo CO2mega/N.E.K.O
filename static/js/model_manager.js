@@ -1,38 +1,57 @@
 (async function initVRMModules() {
-            const loadModules = async () => {
-                console.log(window.t ? window.t('modelManager.vrmLoadingDependencies') : '[VRM] 开始加载依赖模块');
-                const vrmModules = [
-                    '/static/vrm-orientation.js',
-                    '/static/vrm-core.js',
-                    '/static/vrm-expression.js',
-                    '/static/vrm-animation.js',
-                    '/static/vrm-interaction.js',
-                    '/static/vrm-manager.js',
-                    '/static/vrm-ui-popup.js',
-                    '/static/vrm-ui-buttons.js',
-                    '/static/vrm-init.js'
-                ];
+    const loadModules = async () => {
+        console.log(window.t ? window.t('modelManager.vrmLoadingDependencies') : '[VRM] 开始加载依赖模块');
 
-                for (const moduleSrc of vrmModules) {
-                    const script = document.createElement('script');
-                    script.src = `${moduleSrc}?v=${Date.now()}`;
-                    await new Promise((resolve) => {
-                        script.onload = resolve;
-                        script.onerror = resolve; // 即使失败也继续，防止死锁
-                        document.body.appendChild(script);
-                    });
-                }
-                window.vrmModuleLoaded = true;
-                window.dispatchEvent(new CustomEvent('vrm-modules-ready'));
-            };
+        // 提前设置加载中标志，防止 vrm-init.js 加载时其内部 IIFE 再次触发模块加载
+        // 注意：不能用 vrmModuleLoaded，因为下游 waitForVRM 会误判为已完成
+        window._vrmModulesLoading = true;
 
-            // 如果 THREE 还没好，就等事件；好了就直接加载
-            if (typeof window.THREE === 'undefined') {
-                window.addEventListener('three-ready', loadModules, { once: true });
-            } else {
-                loadModules();
-            }
-        })();
+        const vrmModules = [
+            '/static/vrm-orientation.js',
+            '/static/vrm-core.js',
+            '/static/vrm-expression.js',
+            '/static/vrm-animation.js',
+            '/static/vrm-interaction.js',
+            '/static/vrm-cursor-follow.js',
+            '/static/vrm-manager.js',
+            '/static/vrm-ui-popup.js',
+            '/static/vrm-ui-buttons.js',
+            '/static/vrm-init.js'
+        ];
+
+        const failedModules = [];
+        for (const moduleSrc of vrmModules) {
+            const script = document.createElement('script');
+            script.src = `${moduleSrc}?v=${Date.now()}`;
+            await new Promise((resolve) => {
+                script.onload = resolve;
+                script.onerror = () => {
+                    console.error(`[VRM] 模块加载失败: ${moduleSrc}`);
+                    failedModules.push(moduleSrc);
+                    resolve(); // 即使失败也继续，防止死锁
+                };
+                document.body.appendChild(script);
+            });
+        }
+
+        if (failedModules.length > 0) {
+            window.vrmModuleLoaded = false;
+            console.error('[VRM] 以下模块加载失败:', failedModules);
+            window.dispatchEvent(new CustomEvent('vrm-modules-failed', {
+                detail: { failedModules }
+            }));
+        } else {
+            window.dispatchEvent(new CustomEvent('vrm-modules-ready'));
+        }
+    };
+
+    // 如果 THREE 还没好，就等事件；好了就直接加载
+    if (typeof window.THREE === 'undefined') {
+        window.addEventListener('three-ready', loadModules, { once: true });
+    } else {
+        loadModules();
+    }
+})();
 
 // ===== 选项条统一管理器 =====
 /**
@@ -54,7 +73,7 @@ class DropdownManager {
             defaultTextKey: config.defaultTextKey || null,  // i18n key for dynamic translation
             iconAlt: config.iconAlt || config.defaultText,
             iconAltKey: config.iconAltKey || null,  // i18n key for icon alt
-            onChange: config.onChange || (() => {}),
+            onChange: config.onChange || (() => { }),
             getText: config.getText || ((option) => option.textContent),
             shouldSkipOption: config.shouldSkipOption || ((option) => {
                 const value = option.value;
@@ -83,7 +102,7 @@ class DropdownManager {
         DropdownManager.instances.push(this);
         this.init();
     }
-    
+
     init() {
         this.ensureButtonStructure();
         if (!this.config.disabled && this.select && this.dropdown) {
@@ -91,11 +110,11 @@ class DropdownManager {
         }
         this.updateButtonText();
     }
-    
+
     ensureButtonStructure() {
         this.textSpan = document.getElementById(this.config.textSpanId);
         const icon = this.button.querySelector(`.${this.config.iconClass}`);
-        
+
         if (!this.textSpan || !icon) {
             this.button.innerHTML = `
                 <img src="${this.config.iconSrc}" alt="${this.config.iconAlt}" 
@@ -106,7 +125,7 @@ class DropdownManager {
             this.textSpan = document.getElementById(this.config.textSpanId);
         }
     }
-    
+
     updateButtonText() {
         if (!this.textSpan) {
             this.ensureButtonStructure();
@@ -149,11 +168,11 @@ class DropdownManager {
         this.textSpan.textContent = text;
         this.textSpan.setAttribute('data-text', text);
     }
-    
+
     updateDropdown() {
         if (!this.dropdown || !this.select) return;
         this.dropdown.innerHTML = '';
-        
+
         // 辅助函数：尝试翻译 i18n 键
         const translateText = (text) => {
             if (!text) return text;
@@ -173,27 +192,34 @@ class DropdownManager {
             }
             return text;
         };
-        
+
         Array.from(this.select.options).forEach(option => {
             if (this.config.shouldSkipOption(option)) return;
-            
+
             const item = document.createElement('div');
             item.className = 'dropdown-item';
             item.dataset.value = option.value;
             if (option.dataset.itemId) {
                 item.dataset.itemId = option.dataset.itemId;
             }
-            
+
             let text = this.config.getText(option);
             // 尝试翻译文本（如果是 i18n 键）
             text = translateText(text);
-            
+
             const textSpan = document.createElement('span');
             textSpan.className = 'dropdown-item-text';
             textSpan.textContent = text;
             textSpan.setAttribute('data-text', text);
             item.appendChild(textSpan);
-            
+
+            if (option.dataset.itemId) {
+                const steamBadge = document.createElement('span');
+                steamBadge.className = 'steam-badge';
+                steamBadge.textContent = 'Steam';
+                item.appendChild(steamBadge);
+            }
+
             item.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.selectItem(option.value);
@@ -201,7 +227,7 @@ class DropdownManager {
             this.dropdown.appendChild(item);
         });
     }
-    
+
     selectItem(value) {
         if (!this.select) return;
         this.select.value = value;
@@ -212,22 +238,26 @@ class DropdownManager {
             this.config.onChange(value, this.select.options[this.select.selectedIndex]);
         }
     }
-    
+
     static hideAll() {
         DropdownManager.instances.forEach(instance => { instance.hideDropdown(); });
     }
 
+    static updateAllButtonText() {
+        DropdownManager.instances.forEach(instance => { instance.updateButtonText(); });
+    }
+
     async showDropdown() {
         if (!this.dropdown || this.config.disabled) return;
-        
+
         // 在显示当前下拉菜单前，先隐藏所有其他的下拉菜单
         DropdownManager.hideAll();
-        
+
         // 如果有 onBeforeShow 回调，先执行它
         if (typeof this.config.onBeforeShow === 'function') {
             await this.config.onBeforeShow();
         }
-        
+
         this.updateDropdown();
         this.dropdown.style.display = 'block';
     }
@@ -237,7 +267,7 @@ class DropdownManager {
             this.dropdown.style.display = 'none';
         }
     }
-    
+
     async toggleDropdown() {
         if (this.config.disabled) return;
         const isVisible = this.dropdown && this.dropdown.style.display === 'block';
@@ -247,7 +277,7 @@ class DropdownManager {
             await this.showDropdown();
         }
     }
-    
+
     initDropdown() {
         if (!this.button || !this.dropdown) return;
         this.button.addEventListener('click', (e) => {
@@ -263,12 +293,12 @@ class DropdownManager {
             }
         });
     }
-    
+
     enable() {
         if (this.button) this.button.disabled = false;
         if (this.select) this.select.disabled = false;
     }
-    
+
     disable() {
         if (this.button) this.button.disabled = true;
         if (this.select) this.select.disabled = true;
@@ -369,10 +399,10 @@ const ModelPathHelper = {
      */
     normalizeModelPath(rawPath, type = 'model') {
         if (!rawPath) return '';
-        
+
         // 确保 path 是字符串类型
         let path = String(rawPath).trim();
-        
+
         // 如果已经是 URL 格式 (http/https) 或 Web 绝对路径 (/)，直接返回
         if (path.startsWith('http') || path.startsWith('/')) {
             // 统一将 Windows 的反斜杠转换为正斜杠
@@ -385,7 +415,7 @@ const ModelPathHelper = {
 
         // 1. 优先检测是否是项目内置的 static 目录
         if (normalizedPath.includes('static/vrm')) {
-            return type === 'animation' 
+            return type === 'animation'
                 ? `/static/vrm/animation/${filename}`
                 : `/static/vrm/${filename}`;
         }
@@ -582,7 +612,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const statusDiv = document.getElementById('status');
     const statusTextSpan = document.getElementById('status-text');
-    
+
     // 初始化状态文本（带图标）
     const updateStatusText = (text) => {
         if (statusTextSpan) {
@@ -694,7 +724,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let vrmModelManager = null;
     let vrmAnimationManager = null;
     let vrmExpressionManager = null;
-    
+
     // 延迟初始化管理器（确保 DOM 已加载）
     function initDropdownManagers() {
         if (!modelTypeManager) {
@@ -711,7 +741,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 alwaysShowDefault: false
             });
         }
-        
+
         if (!live2dModelManager) {
             console.log('[Model Manager] 初始化 live2dModelManager');
             live2dModelManager = new DropdownManager({
@@ -750,7 +780,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 iconAlt: window.i18next?.t('live2d.selectMotion') || '选择动作',
                 shouldSkipOption: (option) => {
                     return option.value === '' && (
-                        option.textContent.includes('请先加载') || 
+                        option.textContent.includes('请先加载') ||
                         option.textContent.includes('没有动作') ||
                         option.textContent.includes('Select')
                     );
@@ -760,7 +790,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         }
-        
+
         if (!expressionManager) {
             expressionManager = new DropdownManager({
                 buttonId: 'expression-select-btn',
@@ -773,7 +803,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 iconAlt: window.i18next?.t('live2d.selectExpression') || '选择表情',
                 shouldSkipOption: (option) => {
                     return option.value === '' && (
-                        option.textContent.includes('请先加载') || 
+                        option.textContent.includes('请先加载') ||
                         option.textContent.includes('没有表情') ||
                         option.textContent.includes('Select')
                     );
@@ -887,7 +917,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
     }
-    
+
     // 在 DOMContentLoaded 时初始化
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initDropdownManagers);
@@ -942,7 +972,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 动作播放状态
     let isMotionPlaying = false;
-    
+
     // 确保播放按钮初始状态正确（始终显示播放图标）
     if (playMotionBtn) {
         updateMotionPlayButtonIcon();
@@ -962,13 +992,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         let textSpan = document.getElementById('back-text');
         let backImg = backToMainBtn.querySelector('.back-icon');
         let pawImg = backToMainBtn.querySelector('.paw-icon');
-        
+
         // 如果结构被破坏了，重新创建
         if (!textSpan || !backImg || !pawImg) {
             backToMainBtn.innerHTML = '<img src="/static/icons/back_to_main_button.png?v=1" alt="返回" class="back-icon" style="height: 40px; width: auto; max-width: 80px; image-rendering: crisp-edges; margin-right: 10px; flex-shrink: 0; object-fit: contain; display: inline-block;"><span class="round-stroke-text" id="back-text" data-text="返回主页">返回主页</span><img src="/static/icons/paw_ui.png?v=1" alt="猫爪" class="paw-icon" style="height: 70px; width: auto; max-width: 60px; image-rendering: crisp-edges; margin-left: auto; flex-shrink: 0; object-fit: contain; display: inline-block;">';
             textSpan = document.getElementById('back-text');
         }
-        
+
         const isPopupWindow = window.opener !== null;
         if (textSpan) {
             let text;
@@ -995,13 +1025,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 确保按钮结构存在
         let textSpan = document.getElementById('upload-text');
         let importImg = uploadBtn.querySelector('.import-icon');
-        
+
         // 如果结构被破坏了，重新创建
         if (!textSpan || !importImg) {
             uploadBtn.innerHTML = '<img src="/static/icons/import_model_button_icon.png?v=1" alt="导入模型" class="import-icon" style="height: 40px; width: auto; max-width: 80px; image-rendering: crisp-edges; margin-right: 10px; flex-shrink: 0; object-fit: contain; display: inline-block;"><span class="round-stroke-text" id="upload-text" data-text="导入模型">导入模型</span>';
             textSpan = document.getElementById('upload-text');
         }
-        
+
         // 根据模型类型更新文字 - 统一显示"导入模型"
         if (textSpan) {
             // 直接使用中文，不依赖翻译（避免翻译未初始化时显示键名）
@@ -1031,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateModelTypeButtonText();
         updatePersistentExpressionButtonText();
     }, 800);
-    
+
     // 如果i18next已经初始化，立即调用一次
     if (window.t && typeof window.t === 'function' && window.i18n && window.i18n.isInitialized) {
         updateUploadButtonText();
@@ -1042,20 +1072,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 监听语言变化事件
     window.addEventListener('localechange', () => {
         updateUploadButtonText();
-        updateModelTypeButtonText();
-        updatePersistentExpressionButtonText();
-        updateLive2DModelSelectButtonText();
-        updateVRMModelSelectButtonText();
+        DropdownManager.updateAllButtonText();
     });
-    
+
     // 监听i18next的languageChanged事件（更可靠）
     if (window.i18n && window.i18n.on) {
         window.i18n.on('languageChanged', () => {
             updateUploadButtonText();
-            updateModelTypeButtonText();
-            updatePersistentExpressionButtonText();
-            updateLive2DModelSelectButtonText();
-            updateVRMModelSelectButtonText();
+            DropdownManager.updateAllButtonText();
         });
     }
 
@@ -1104,7 +1128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
-    await window.live2dManager.initPIXI('live2d-canvas', 'live2d-container');
+    await window.live2dManager.ensurePIXIReady('live2d-canvas', 'live2d-container');
     showStatus(t('live2d.pixiInitialized', 'PIXI 初始化完成'));
 
     // 先加载模型列表
@@ -1118,7 +1142,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const option = document.createElement('option');
                 option.value = model.name;
                 option.textContent = model.display_name || model.name;
-                option.dataset.itemId = model.item_id;
+                if (model.item_id) {
+                    option.dataset.itemId = model.item_id;
+                }
                 modelSelect.appendChild(option);
             });
             // 如果没有选择，自动选择第一个模型
@@ -1185,15 +1211,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     })();
 
     //
+    // 注意：必须使用专用接口保存模型和光照设置，因为通用接口会过滤掉保留字段
     // 保存模型设置到角色的函数（全面升级版）
     async function saveModelToCharacter(modelName, itemId = null, vrmAnimation = null) {
+        function decodeMaybeUrlComponent(value) {
+            if (typeof value !== 'string') return value;
+            try {
+                return decodeURIComponent(value);
+            } catch {
+                return value;
+            }
+        }
+
+        function extractLive2DFolderNameFromPath(modelPath) {
+            if (!modelPath || typeof modelPath !== 'string') return null;
+            const normalized = modelPath.split('?')[0].split('#')[0].replace(/\\/g, '/');
+            const segments = normalized.split('/').filter(Boolean);
+            if (segments.length < 2) return null;
+            const filename = segments[segments.length - 1];
+            const folder = segments[segments.length - 2];
+            if (!/\.model3\.json$/i.test(filename)) return null;
+
+            if (segments[0] === 'workshop') {
+                if (segments.length >= 4) return decodeMaybeUrlComponent(folder);
+                const base = filename.replace(/\.model3\.json$/i, '');
+                return decodeMaybeUrlComponent(base) || null;
+            }
+
+            return decodeMaybeUrlComponent(folder) || null;
+        }
+
         try {
             // 1. 获取角色名并验证
             const lanlanName = await getLanlanName();
             if (!lanlanName || lanlanName.trim() === '') {
                 const errorMsg = t('live2d.cannotSaveNoCharacter', '无法保存：未指定角色名称');
                 showStatus(errorMsg, 3000);
-                // 显示错误提示（如果存在 toast 功能）
                 if (typeof showToast === 'function') {
                     showToast(errorMsg, 'error');
                 }
@@ -1202,7 +1255,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 在发送 PUT 请求保存数据前，添加校验
             if (currentModelType === 'vrm') {
-                // 如果 modelName (即路径) 是 "undefined"，抛出错误或尝试自动修复
                 if (!modelName ||
                     modelName === 'undefined' ||
                     modelName === 'null' ||
@@ -1213,7 +1265,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ))) {
                     console.error('[模型管理] 检测到无效的 VRM 模型路径，尝试自动修复:', modelName);
 
-                    // 尝试从 currentModelInfo 获取有效路径
                     if (currentModelInfo && currentModelInfo.path &&
                         currentModelInfo.path !== 'undefined' &&
                         currentModelInfo.path !== 'null' &&
@@ -1223,13 +1274,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                         currentModelInfo.name !== 'undefined' &&
                         currentModelInfo.name !== 'null' &&
                         !currentModelInfo.name.toLowerCase().includes('undefined')) {
-                        // 使用 ModelPathHelper 标准化路径
                         const filename = currentModelInfo.name.endsWith('.vrm')
                             ? currentModelInfo.name
                             : `${currentModelInfo.name}.vrm`;
                         modelName = ModelPathHelper.normalizeModelPath(filename, 'model');
                     } else {
-                        // 如果无法修复，抛出错误
                         const errorMsg = t('live2d.vrmModelPathInvalid', 'VRM 模型路径无效，无法保存。请重新选择模型。');
                         showStatus(errorMsg, 5000);
                         throw new Error('VRM 模型路径无效: ' + modelName);
@@ -1239,81 +1288,126 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             showStatus(t('live2d.savingSettings', '正在保存设置...'));
 
-            // 2. 🔥 先从服务器拉取当前角色的完整档案（防止覆盖掉其他不需要修改的属性）
-            // 使用 RequestHelper 确保统一的错误处理和超时
-            const allData = await RequestHelper.fetchJson('/api/characters');
-            // 拿到该角色的旧数据，如果没有就初始化为空对象
-            const charData = allData['猫娘']?.[lanlanName] || {};
+            // 2. 构建模型数据，使用专用接口保存
+            const modelData = {
+                model_type: currentModelType,
+            };
 
-            // 3. 更新模型相关字段
             if (currentModelType === 'vrm') {
-                charData.model_type = 'vrm';
-                // 绝对不要把 "undefined" 字符串保存到后端数据库
-                charData.vrm = modelName;
-                // 清空 Live2D 字段，避免混淆
-                charData.live2d = "";
-                if (vrmAnimation) charData.vrm_animation = vrmAnimation;
-
-                // 🔥 获取并写入光照数据
-                const ambient = document.getElementById('ambient-light-slider');
-                const main = document.getElementById('main-light-slider');
-                const fill = document.getElementById('fill-light-slider');
-                const rim = document.getElementById('rim-light-slider');
-                const top = document.getElementById('top-light-slider');
-                const bottom = document.getElementById('bottom-light-slider');
-
-                if (ambient && main) {
-                    charData.lighting = {
-                        ambient: parseFloat(ambient.value),
-                        main: parseFloat(main.value),
-                        // 简化模式下，辅助光强制保存为 0.0
-                        fill: 0.0,
-                        rim: 0.0,
-                        top: 0.0,
-                        bottom: 0.0
-                    };
-                    // 保存曝光值
-                    const exposure = document.getElementById('exposure-slider');
-                    if (exposure) {
-                        charData.lighting.exposure = parseFloat(exposure.value);
+                // 转换 VRM 路径：从完整 HTTP 路径转换为后端要求的相对路径
+                let vrmPath = modelName;
+                if (vrmPath && typeof vrmPath === 'string') {
+                    const urlMatch = vrmPath.match(/^(?:http|https):\/\/[^/]+(\/user_vrm\/.*|\/static\/vrm\/.*)/);
+                    if (urlMatch) {
+                        vrmPath = urlMatch[1];
                     }
-                    // 保存色调映射
-                    const tonemapping = document.getElementById('tonemapping-select');
-                    if (tonemapping) {
-                        charData.lighting.toneMapping = parseInt(tonemapping.value);
+                    if (!vrmPath.startsWith('/user_vrm/') && !vrmPath.startsWith('/static/vrm/')) {
+                        if (currentModelInfo && currentModelInfo.path) {
+                            const infoPathMatch = currentModelInfo.path.match(/^(?:http|https):\/\/[^/]+(\/user_vrm\/.*|\/static\/vrm\/.*)/);
+                            if (infoPathMatch) {
+                                vrmPath = infoPathMatch[1];
+                            } else if (currentModelInfo.path.startsWith('/user_vrm/') || currentModelInfo.path.startsWith('/static/vrm/')) {
+                                vrmPath = currentModelInfo.path;
+                            }
+                        }
                     }
                 }
-                // 移除旧的预设字段
-                delete charData.lightingPreset;
+                modelData.vrm = vrmPath;
+                const idleAnimSel = document.getElementById('idle-animation-select');
+                if (vrmAnimation) {
+                    modelData.vrm_animation = vrmAnimation;
+                } else if (idleAnimSel && idleAnimSel.value) {
+                    modelData.vrm_animation = idleAnimSel.value;
+                }
+
+                if (idleAnimSel && idleAnimSel.value) {
+                    modelData.idle_animation = idleAnimSel.value;
+                }
             } else {
-                // Live2D 逻辑
-                charData.model_type = 'live2d';
-                charData.live2d = modelName;
-                charData.vrm = null;
-                if (itemId) charData.item_id = itemId;
+                const inferredFolderName = extractLive2DFolderNameFromPath(
+                    (currentModelInfo && currentModelInfo.path) ? currentModelInfo.path : modelName
+                );
+                modelData.live2d = decodeMaybeUrlComponent(inferredFolderName || modelName);
+                if (itemId != null && itemId !== '') {
+                    modelData.item_id = itemId;
+                    modelData.live2d_item_id = itemId;
+                }
             }
 
-
-            // 4. 🔥 使用【通用更新接口】发送数据（这个接口支持保存任意字段）
-            // 后端 API: PUT /api/characters/catgirl/{name}
-            // 使用 RequestHelper 确保统一的错误处理和超时
-            const result = await RequestHelper.fetchJson(
-                `/api/characters/catgirl/${encodeURIComponent(lanlanName)}`,
+            // 3. 使用【专用模型接口】保存模型设置（包含光照和待机动作）
+            const modelResult = await RequestHelper.fetchJson(
+                `/api/characters/catgirl/l2d/${encodeURIComponent(lanlanName)}`,
                 {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(charData)
+                    body: JSON.stringify(modelData)
                 }
             );
-            if (result.success) {
-                const modelDisplayName = currentModelType === 'vrm' ? `VRM: ${modelName}` : modelName;
-                showStatus(t('live2d.modelSettingsSaved', `已保存模型和光照设置`, { name: lanlanName }), 2000);
-                return true;
-            } else {
-                throw new Error(result.error || '保存失败');
+
+            if (!modelResult.success) {
+                throw new Error(modelResult.error || '保存模型设置失败');
             }
+
+            let lightingResult = null;
+            const ambient = document.getElementById('ambient-light-slider');
+            const main = document.getElementById('main-light-slider');
+
+            // 4. 如果是 VRM 模式，单独保存光照设置（仅光照部分独立保存）
+            if (currentModelType === 'vrm' && ambient && main) {
+                const lightingData = {
+                    lighting: {
+                        ambient: parseFloat(ambient.value),
+                        main: parseFloat(main.value),
+                        fill: 0.0,
+                        rim: 0.0,
+                        top: 0.0,
+                        bottom: 0.0
+                    }
+                };
+
+                const exposure = document.getElementById('exposure-slider');
+                if (exposure) {
+                    lightingData.lighting.exposure = parseFloat(exposure.value);
+                }
+                const tonemapping = document.getElementById('tonemapping-select');
+                if (tonemapping) {
+                    lightingData.lighting.toneMapping = parseInt(tonemapping.value);
+                }
+
+                try {
+                    lightingResult = await RequestHelper.fetchJson(
+                        `/api/characters/catgirl/${encodeURIComponent(lanlanName)}/lighting`,
+                        {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(lightingData)
+                        }
+                    );
+                } catch (e) {
+                    console.warn('保存光照设置失败:', e);
+                    lightingResult = { success: false, error: e.message };
+                }
+            }
+
+            const modelDisplayName = currentModelType === 'vrm' ? `VRM: ${modelName}` : modelName;
+            let saveMessage;
+            const lightingFailed = currentModelType === 'vrm' && ambient && main && (!lightingResult || !lightingResult.success);
+
+            if (lightingFailed) {
+                saveMessage = t('live2d.modelSavedLightingFailed', `已保存模型设置，光照设置保存失败`, { name: modelDisplayName });
+            } else if (currentModelType === 'vrm' && ambient && main) {
+                saveMessage = t('live2d.modelSettingsSavedWithLighting', `已保存模型和光照设置`, { name: modelDisplayName });
+            } else if (currentModelType === 'vrm') {
+                saveMessage = t('live2d.modelSettingsSaved', `已保存模型设置`, { name: modelDisplayName });
+            } else {
+                saveMessage = t('live2d.modelSettingsSaved', `已保存模型设置`, { name: modelDisplayName });
+            }
+            showStatus(saveMessage, 2000);
+            return true;
 
         } catch (error) {
             console.error('保存模型设置失败:', error);
@@ -1434,6 +1528,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (emotionConfigGroup) {
                 emotionConfigGroup.style.display = 'flex';
             }
+            // 隐藏VRM情感配置按钮（Live2D模式下）
+            const vrmEmotionConfigGroup = document.getElementById('vrm-emotion-config-group');
+            if (vrmEmotionConfigGroup) {
+                vrmEmotionConfigGroup.style.display = 'none';
+            }
 
             // 更新上传按钮提示文本（Live2D模式）
             if (uploadBtn) {
@@ -1445,26 +1544,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 隐藏 VRM 动作预览组
             if (vrmAnimationGroup) vrmAnimationGroup.style.display = 'none';
-                // 切换到Live2D时，重置VRM动作和表情播放状态
-                if (isVrmAnimationPlaying && vrmManager) {
-                    vrmManager.stopVRMAAnimation();
-                    isVrmAnimationPlaying = false;
-                    updateVRMAnimationPlayButtonIcon();
-                }
-                if (isVrmExpressionPlaying && vrmManager && vrmManager.expression) {
-                    vrmManager.expression.resetBaseExpression();
-                    isVrmExpressionPlaying = false;
-                    updateVRMExpressionPlayButtonIcon();
-                }
+            // 切换到Live2D时，重置VRM动作和表情播放状态
+            if (isVrmAnimationPlaying && vrmManager) {
+                vrmManager.stopVRMAAnimation();
+                isVrmAnimationPlaying = false;
+                updateVRMAnimationPlayButtonIcon();
+            }
+            if (isVrmExpressionPlaying && vrmManager && vrmManager.expression) {
+                vrmManager.expression.resetBaseExpression();
+                isVrmExpressionPlaying = false;
+                updateVRMExpressionPlayButtonIcon();
+            }
             // 隐藏 VRM 打光设置组
             const vrmLightingGroup = document.getElementById('vrm-lighting-group');
             if (vrmLightingGroup) vrmLightingGroup.style.display = 'none';
+            // 隐藏 VRM 待机动作设置组
+            const vrmIdleAnimGroup = document.getElementById('vrm-idle-animation-group');
+            if (vrmIdleAnimGroup) vrmIdleAnimGroup.style.display = 'none';
 
-            // 【关键修复】强制重新初始化PIXI
-            // PIXI销毁后可能会移除canvas元素，需要重新创建
+            // 确保 Live2D Canvas 存在（PIXI 被销毁时可能移除）
             const live2dCanvas = document.getElementById('live2d-canvas');
             if (!live2dCanvas) {
-                // canvas被销毁了，需要重新创建
                 const newCanvas = document.createElement('canvas');
                 newCanvas.id = 'live2d-canvas';
                 const container = document.getElementById('live2d-container');
@@ -1473,13 +1573,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // 无论如何都重新初始化PIXI，确保干净的状态
+            // 幂等初始化：仅在未就绪时初始化，避免重复重建导致首帧抖动
             if (window.live2dManager) {
-                // 强制重置状态
-                window.live2dManager.pixi_app = null;
-                window.live2dManager.isInitialized = false;
-
-                await window.live2dManager.initPIXI('live2d-canvas', 'live2d-container');
+                await window.live2dManager.ensurePIXIReady('live2d-canvas', 'live2d-container');
                 showStatus(t('live2d.pixiInitialized', 'PIXI 初始化完成'));
             }
         } else { // VRM
@@ -1614,9 +1710,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 emotionManagerGroup.style.display = 'flex';
             }
-            // 隐藏情感配置按钮组（VRM模式下不需要）
+            // 隐藏情感配置按钮组（VRM模式下不需要Live2D的）
             if (emotionConfigGroup) {
                 emotionConfigGroup.style.display = 'none';
+            }
+            // 显示VRM情感配置按钮
+            const vrmEmotionConfigGroup = document.getElementById('vrm-emotion-config-group');
+            if (vrmEmotionConfigGroup) {
+                vrmEmotionConfigGroup.style.display = 'flex';
             }
             // 隐藏常驻表情组（VRM模式下不需要）
             const persistentExpressionGroup = document.getElementById('persistent-expression-group');
@@ -1627,6 +1728,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 显示 VRM 打光设置组
             const vrmLightingGroup = document.getElementById('vrm-lighting-group');
             if (vrmLightingGroup) vrmLightingGroup.style.display = 'flex';
+            // 显示 VRM 待机动作设置组（独立于打光）
+            const vrmIdleAnimGroup = document.getElementById('vrm-idle-animation-group');
+            if (vrmIdleAnimGroup) vrmIdleAnimGroup.style.display = 'flex';
+            // 切换到 VRM 模式时立即加载待机动作列表
+            console.log('[VRM IdleAnimation] 切换到 VRM 模式，开始加载待机动作列表');
+            loadIdleAnimationOptions();
             // 更新上传按钮提示文本（VRM模式）
             if (uploadBtn) {
                 updateUploadButtonText();
@@ -1662,10 +1769,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (window.VRMManager || window.vrmModuleLoaded) {
                             return resolve();
                         }
-                        
+
                         // 添加事件监听器（使用 once 确保只触发一次）
                         window.addEventListener('vrm-modules-ready', resolve, { once: true });
-                        
+
                         // 添加安全超时（8秒），防止无限等待
                         setTimeout(() => {
                             reject(new Error('VRM Module Load Timeout'));
@@ -1673,7 +1780,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
 
                     showStatus(t('live2d.waitingVRMLoader', '正在初始化 VRM 管理器...'));
-                    
+
                     // 等待 VRM 模块加载（带超时和错误处理）
                     try {
                         await waitForVRM();
@@ -1778,7 +1885,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             modelSelect.dispatchEvent(new Event('change', { bubbles: true }));
                         }
                     }
-                    
+
                     // 【关键修复】延迟双重保险：确保 PIXI ticker 在模型加载后启动
                     // 由于 modelSelect 的 change 事件是异步的，模型可能还没有完全加载
                     // 使用延迟来确保 ticker 一定在运行
@@ -1807,14 +1914,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                             if (catgirlConfig && catgirlConfig.vrm) {
                                 const vrmPath = catgirlConfig.vrm;
                                 const vrmFilename = vrmPath.split(/[/\\]/).pop();
-                                
+
                                 // 在下拉列表中找到匹配的选项
                                 const matchedOption = Array.from(vrmModelSelect.options).find(opt => {
                                     if (!opt.value) return false;
                                     const optFilename = opt.getAttribute('data-filename') || '';
                                     return optFilename === vrmFilename || opt.value.endsWith(vrmFilename);
                                 });
-                                
+
                                 if (matchedOption) {
                                     vrmModelSelect.value = matchedOption.value;
                                     vrmModelSelect.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2001,10 +2108,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (window.VRMManager || window.vrmModuleLoaded) {
                             return resolve();
                         }
-                        
+
                         // 添加事件监听器（使用 once 确保只触发一次）
                         window.addEventListener('vrm-modules-ready', resolve, { once: true });
-                        
+
                         // 添加安全超时（8秒），防止无限等待
                         setTimeout(() => {
                             reject(new Error('VRM Module Load Timeout'));
@@ -2012,7 +2119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
 
                     showStatus(t('live2d.waitingVRMLoader', '正在初始化 VRM 管理器...'));
-                    
+
                     // 等待 VRM 模块加载（带超时和错误处理）
                     try {
                         await waitForVRM();
@@ -2164,10 +2271,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 // 使用 URL 加载模型，而不是本地文件路径（浏览器不允许加载 file:// 路径）
-                // 传入 { autoPlay: false } 让模型保持 T-Pose 静止
+                // 传入 { autoPlay: false } 以便在此处统一播放待机动画，避免先露出 T-pose
                 //增加 addShadow: false
                 // 【注意】朝向会自动从preferences中加载（在vrm-core.js的loadModel中处理）
                 await vrmManager.loadModel(modelUrl, { autoPlay: false, addShadow: false });
+                // 加载后立即播默认待机动画，避免 T-pose 显得生硬
+                const defaultIdleUrl = '/static/vrm/animation/wait03.vrma';
+                const idleSel = document.getElementById('idle-animation-select');
+                const idleUrl = (idleSel && idleSel.value) ? idleSel.value : defaultIdleUrl;
+                if (idleUrl && vrmManager.animation) {
+                    try {
+                        await vrmManager.playVRMAAnimation(idleUrl, { loop: true, immediate: true, isIdle: true });
+                    } catch (e) {
+                        console.warn('[VRM] 播放默认待机动画失败，使用内置默认:', e);
+                        if (idleUrl !== defaultIdleUrl) {
+                            try {
+                                await vrmManager.playVRMAAnimation(defaultIdleUrl, { loop: true, immediate: true, isIdle: true });
+                            } catch (e2) {
+                                console.warn('[VRM] 播放 wait03 待机动画失败:', e2);
+                            }
+                        }
+                    }
+                }
                 // 加载新模型后，重置播放状态
                 isVrmAnimationPlaying = false;
                 updateVRMAnimationPlayButtonIcon();
@@ -2192,6 +2317,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 // 在这里加载表情
                 loadVRMExpressions();
+
+                // 加载模型特定的情感映射配置
+                if (vrmManager && vrmManager.expression && modelPath) {
+                    // 从模型路径提取模型名称
+                    const modelName = modelPath.split('/').pop().replace(/\.vrm$/i, '');
+                    vrmManager.expression.loadMoodMap(modelName);
+                }
+
                 // 加载新模型时重置动作列表状态，允许重新加载动作
                 animationsLoaded = false;
                 // 主动加载动作列表，解开下拉菜单的锁定状态
@@ -2225,12 +2358,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (vrmAnimationSelect && vrmAnimations.length > 0) {
                 vrmAnimationSelect.innerHTML = `<option value="">${t('live2d.selectMotion', '选择动作')}</option>`;
                 vrmAnimations.forEach(anim => {
-                    const option = document.createElement('option');
                     // 确保 animPath 是字符串：优先使用 anim.path，否则使用 anim.url，最后使用 anim 本身（如果是字符串）
                     const animPath = (typeof anim.path === 'string' ? anim.path : null)
                         || (typeof anim.url === 'string' ? anim.url : null)
-                        || (typeof anim === 'string' ? anim : String(anim));
+                        || (typeof anim === 'string' ? anim : null);
+                    if (!animPath) {
+                        console.warn('[VRM] 跳过无效动画项:', anim);
+                        return;
+                    }
 
+                    const option = document.createElement('option');
                     const finalUrl = ModelPathHelper.vrmToUrl(animPath, 'animation');
 
                     option.value = finalUrl;
@@ -2314,7 +2451,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         vrmAnimationSelect.addEventListener('change', async (e) => {
             const selectedValue = e.target.value;
-            
+
             // 如果选择的是第一个选项（空值，即"增加动作"），触发文件选择器
             if (selectedValue === '') {
                 const vrmAnimationFileUpload = document.getElementById('vrm-animation-file-upload');
@@ -2326,7 +2463,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateVRMAnimationSelectButtonText(); // 更新按钮文字为"选择动作"
                 return;
             }
-            
+
             updateVRMAnimationSelectButtonText();
             const animationPath = e.target.value;
             if (animationPath && playVrmAnimationBtn) {
@@ -2398,7 +2535,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     showStatus(t('live2d.vrmAnimation.playingAnimation', `正在播放: ${animDisplayName}`, { name: animDisplayName }), 2000);
                     await vrmManager.playVRMAAnimation(finalAnimationUrl, {
                         loop: loop,
-                        timeScale: speed
+                        timeScale: speed,
+                        isIdle: false  // 手动播放的动作不是待机动画
                     });
                     isVrmAnimationPlaying = true;
                     updateVRMAnimationPlayButtonIcon();
@@ -2574,6 +2712,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const mainLightSlider = document.getElementById('main-light-slider');
     const exposureSlider = document.getElementById('exposure-slider');
     const tonemappingSelect = document.getElementById('tonemapping-select');
+    const idleAnimationSelect = document.getElementById('idle-animation-select');
     const ambientLightValue = document.getElementById('ambient-light-value');
     const mainLightValue = document.getElementById('main-light-value');
     const exposureValue = document.getElementById('exposure-value');
@@ -2682,6 +2821,102 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // 待机动作选择器
+    if (idleAnimationSelect) {
+        idleAnimationSelect.addEventListener('change', async (e) => {
+            const selectedUrl = e.target.value;
+            if (!selectedUrl) return;
+            // 实时切换待机动作：停止当前动画，播放新的循环动画
+            if (vrmManager && vrmManager.animation && vrmManager.currentModel) {
+                try {
+                    if (vrmManager.vrmaAction) {
+                        vrmManager.stopVRMAAnimation();
+                    }
+                    // 切换待机动作会 stop 之前的动画，同步重置手动动作的播放状态和图标
+                    isVrmAnimationPlaying = false;
+                    updateVRMAnimationPlayButtonIcon();
+                    await vrmManager.playVRMAAnimation(selectedUrl, { loop: true, immediate: true, isIdle: true });
+                    console.log('[VRM IdleAnimation] 待机动作已切换:', e.target.options[e.target.selectedIndex]?.text || selectedUrl);
+                    showStatus(t('vrm.idleAnimation.changed', `待机动作已切换`, { name: e.target.options[e.target.selectedIndex]?.text || selectedUrl }), 2000);
+                } catch (err) {
+                    console.warn('[VRM IdleAnimation] 切换待机动作失败:', err);
+                    showStatus(t('vrm.idleAnimation.changeFailed', '切换待机动作失败'), 2000);
+                }
+            }
+        });
+    }
+
+    /**
+     * 加载待机动作选项列表
+     * 从 /api/model/vrm/animations 获取可用的VRMA动画文件，填充待机动作下拉菜单
+     * 默认选中 wait03.vrma，用户可在保存设置时持久化选择
+     *
+     * 使用 inflight Promise 去重：并发调用共享同一请求，避免晚返回的
+     * 响应覆盖已恢复的 idleAnimation 选中值
+     */
+    async function loadIdleAnimationOptions() {
+        // 用函数自身属性存储 inflight Promise，避免 let 声明的 TDZ 问题
+        if (loadIdleAnimationOptions._promise) return loadIdleAnimationOptions._promise;
+        loadIdleAnimationOptions._promise = _doLoadIdleAnimationOptions().finally(() => {
+            loadIdleAnimationOptions._promise = null;
+        });
+        return loadIdleAnimationOptions._promise;
+    }
+    async function _doLoadIdleAnimationOptions() {
+        const selectEl = document.getElementById('idle-animation-select');
+        if (!selectEl) {
+            console.debug('[VRM IdleAnimation] 待机动作下拉元素未找到，跳过加载');
+            return;
+        }
+        try {
+            console.log('[VRM IdleAnimation] 正在从 API 加载待机动作列表...');
+            const data = await RequestHelper.fetchJson('/api/model/vrm/animations');
+            const animations = (data.success && data.animations) ? data.animations : [];
+            const defaultUrl = '/static/vrm/animation/wait03.vrma';
+
+            selectEl.innerHTML = '';
+            if (animations.length > 0) {
+                animations.forEach(anim => {
+                    const animPath = (typeof anim.path === 'string' ? anim.path : null)
+                        || (typeof anim.url === 'string' ? anim.url : null)
+                        || (typeof anim === 'string' ? anim : null);
+                    if (!animPath) {
+                        console.warn('[VRM IdleAnimation] 跳过无效动画项:', anim);
+                        return;
+                    }
+
+                    const option = document.createElement('option');
+                    const finalUrl = ModelPathHelper.vrmToUrl(animPath, 'animation');
+                    const displayName = anim.name || anim.filename || finalUrl.split('/').pop();
+                    option.value = finalUrl;
+                    option.textContent = displayName;
+                    option.style.color = '#4f8cff';
+                    // 默认选中 wait03.vrma
+                    if (finalUrl === defaultUrl || animPath.includes('wait03.vrma')) {
+                        option.selected = true;
+                    }
+                    selectEl.appendChild(option);
+                });
+                console.log(`[VRM IdleAnimation] 待机动作列表加载成功，共 ${animations.length} 个动画`);
+            } else {
+                const emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = t('live2d.vrmAnimation.noAnimations', '未找到动作文件');
+                emptyOption.style.color = '#4f8cff';
+                selectEl.appendChild(emptyOption);
+                console.warn('[VRM IdleAnimation] API 返回的动画列表为空');
+            }
+        } catch (error) {
+            console.error('[VRM IdleAnimation] 加载待机动作列表失败:', error);
+            selectEl.innerHTML = '';
+            const errorOption = document.createElement('option');
+            errorOption.value = '';
+            errorOption.textContent = t('live2d.loadFailed', '加载失败');
+            errorOption.style.color = '#4f8cff';
+            selectEl.appendChild(errorOption);
+        }
+    }
+
 
 
 
@@ -2784,6 +3019,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 applyLightingValues(lighting);
             } else {
             }
+
+            // 加载待机动作选项并恢复保存的选择
+            await loadIdleAnimationOptions();
+            const idleAnimSel = idleAnimationSelect || document.getElementById('idle-animation-select');
+            if (charData?.idleAnimation && idleAnimSel) {
+                idleAnimSel.value = charData.idleAnimation;
+                if (idleAnimSel.value === charData.idleAnimation) {
+                    // 值设置成功，触发 change 事件以播放保存的待机动作
+                    idleAnimSel.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    console.warn('[VRM] 保存的待机动作不在列表中:', charData.idleAnimation);
+                }
+            }
         } catch (error) {
             console.error('加载打光配置失败:', error);
         }
@@ -2833,7 +3081,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 修改模型选择事件，自动保存模型设置
     modelSelect.addEventListener('change', async (e) => {
         const modelName = e.target.value;
-        
+
         // 更新按钮文字
         if (typeof updateLive2DModelSelectButtonText === 'function') {
             updateLive2DModelSelectButtonText();
@@ -2895,6 +3143,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 使用助手
             const filesData = await RequestHelper.fetchJson(apiUrl);
+
+            // 检查 API 是否返回错误（例如模型目录不存在）
+            if (filesData.success === false) {
+                throw new Error(filesData.error || '获取模型文件列表失败');
+            }
+
+            // 确保字段存在，防止 undefined 访问导致 TypeError
+            filesData.motion_files = filesData.motion_files || [];
+            filesData.expression_files = filesData.expression_files || [];
+
             currentModelFiles = filesData;
 
             // 2. Fetch model config
@@ -2967,7 +3225,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateMotionDropdown();
             }
             updateSelectWithOptions(expressionSelect, currentModelFiles.expression_files, t('live2d.selectExpression', '选择表情'), 'expression');
-            
+
             // 更新表情选择器按钮文字和下拉菜单
             updateExpressionSelectButtonText();
             updateExpressionDropdown();
@@ -3048,6 +3306,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // 确保图标仍然是播放图标
                 updateMotionPlayButtonIcon();
                 showStatus(t('live2d.motionStopped', '动作已停止'), 1000);
+
+                // 清除动作预览恢复定时器
+                if (window._motionPreviewRestoreTimer) {
+                    clearTimeout(window._motionPreviewRestoreTimer);
+                    window._motionPreviewRestoreTimer = null;
+                }
+
+                // 清除预览标记
+                window._currentMotionPreviewId = null;
+
+                // 停止动作后平滑恢复到初始状态（smoothReset 内部会在快照后停止 motion/expression）
+                if (window.live2dManager && typeof window.live2dManager.smoothResetToInitialState === 'function') {
+                    window.live2dManager.smoothResetToInitialState().catch(e => {
+                        console.warn('[ModelManager] 停止动作后平滑恢复失败:', e);
+                        // 降级：尝试清除表情以确保不残留
+                        if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                            window.live2dManager.clearExpression();
+                        }
+                    });
+                } else if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                    window.live2dManager.clearExpression();
+                }
             } catch (error) {
                 console.error('停止动作失败:', error);
             }
@@ -3056,11 +3336,62 @@ document.addEventListener('DOMContentLoaded', async () => {
             const motionIndex = currentModelFiles.motion_files.indexOf(motionSelect.value);
             if (motionIndex > -1) {
                 try {
+                    // 清除之前的恢复定时器
+                    if (window._motionPreviewRestoreTimer) {
+                        clearTimeout(window._motionPreviewRestoreTimer);
+                        window._motionPreviewRestoreTimer = null;
+                    }
+                    if (window._expressionPreviewRestoreTimer) {
+                        clearTimeout(window._expressionPreviewRestoreTimer);
+                        window._expressionPreviewRestoreTimer = null;
+                    }
+                    // 使在途的表情 await 回调失效，防止异步返回后设置恢复定时器打断动作
+                    window._currentExpressionPreviewToken = null;
+
                     live2dModel.motion('PreviewAll', motionIndex, 3);
                     isMotionPlaying = true;
                     // 确保图标仍然是播放图标
                     updateMotionPlayButtonIcon();
                     showStatus(t('live2d.playingMotion', `播放动作: ${motionSelect.value}`, { motion: motionSelect.value }), 1000);
+
+                    // 创建预览标记，防止快速切换预览时旧的 fetch 回调覆盖新的恢复定时器
+                    window._currentMotionPreviewId = (window._currentMotionPreviewId || 0) + 1;
+                    const previewId = window._currentMotionPreviewId;
+
+                    // 尝试获取动作持续时间，设置自动恢复定时器
+                    const _motionRestoreCallback = () => {
+                        if (window._currentMotionPreviewId !== previewId) return; // 已被新的预览覆盖
+                        window._motionPreviewRestoreTimer = null;
+                        window._currentMotionPreviewId = null;
+                        isMotionPlaying = false;
+                        updateMotionPlayButtonIcon();
+                        console.log('[ModelManager] 动作预览结束，自动恢复到初始状态');
+                        if (window.live2dManager && typeof window.live2dManager.smoothResetToInitialState === 'function') {
+                            window.live2dManager.smoothResetToInitialState().catch(() => {
+                                if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                                    window.live2dManager.clearExpression();
+                                }
+                            });
+                        } else if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                            window.live2dManager.clearExpression();
+                        }
+                    };
+                    try {
+                        const motionFile = motionSelect.value;
+                        const motionUrl = window.live2dManager ? window.live2dManager.resolveAssetPath(motionFile) : motionFile;
+                        RequestHelper.fetchJson(motionUrl).then(data => {
+                            if (window._currentMotionPreviewId !== previewId) return; // 过时的响应
+                            const dur = data?.Meta?.Duration ? data.Meta.Duration * 1000 + 500 : 10000; // 动作时长 + 500ms缓冲，或10秒后备
+                            window._motionPreviewRestoreTimer = setTimeout(_motionRestoreCallback, dur);
+                        }).catch(() => {
+                            if (window._currentMotionPreviewId !== previewId) return; // 过时的响应
+                            // fetch失败，使用10秒后备定时器
+                            window._motionPreviewRestoreTimer = setTimeout(_motionRestoreCallback, 10000);
+                        });
+                    } catch (e) {
+                        // 设置后备定时器
+                        window._motionPreviewRestoreTimer = setTimeout(_motionRestoreCallback, 10000);
+                    }
                 } catch (error) {
                     console.error('播放动作失败:', error);
                     showStatus(t('live2d.playMotionFailed', `播放动作失败: ${motionSelect.value}`, { motion: motionSelect.value }), 2000);
@@ -3070,7 +3401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
     });
-    
+
     // 当选择新动作时，重置播放状态
     motionSelect.addEventListener('change', async (e) => {
         const selectedValue = e.target.value;
@@ -3153,12 +3484,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         const expressionName = expressionSelect.value.split('/').pop().replace('.exp3.json', '');
 
         try {
+            // 清除之前的表情预览恢复定时器
+            if (window._expressionPreviewRestoreTimer) {
+                clearTimeout(window._expressionPreviewRestoreTimer);
+                window._expressionPreviewRestoreTimer = null;
+            }
+            // 使在途的动作预览 fetch 回调失效，防止异步返回后设置恢复定时器打断表情
+            if (window._motionPreviewRestoreTimer) {
+                clearTimeout(window._motionPreviewRestoreTimer);
+                window._motionPreviewRestoreTimer = null;
+            }
+            window._currentMotionPreviewId = null;
+
+            // 创建预览标记，防止快速连续点击时并发 await 导致多个定时器共存
+            window._currentExpressionPreviewToken = (window._currentExpressionPreviewToken || 0) + 1;
+            const previewToken = window._currentExpressionPreviewToken;
+
             // expression 方法是异步的，需要使用 await
             // 注意：Live2D SDK 的 expression 方法可能返回 null/undefined 但仍然成功播放
             const result = await currentModel.expression(expressionName);
+
+            // await 返回后检查标记是否仍然匹配（可能已被新的预览覆盖）
+            if (window._currentExpressionPreviewToken !== previewToken) return;
+
             // Live2D SDK 的 expression 方法成功时可能返回 falsy 值，这里改为检查是否抛出异常
             // 如果没有抛出异常，就认为播放成功
             showStatus(t('live2d.playingExpression', `播放表情: ${expressionName}`, { expression: expressionName }), 1000);
+
+            // 设置自动恢复定时器：5秒后平滑恢复到初始状态
+            window._expressionPreviewRestoreTimer = setTimeout(() => {
+                window._expressionPreviewRestoreTimer = null;
+                if (window._currentExpressionPreviewToken !== previewToken) return; // 已被新的预览覆盖
+                window._currentExpressionPreviewToken = null;
+                console.log('[ModelManager] 表情预览结束，自动恢复到初始状态');
+                if (window.live2dManager && typeof window.live2dManager.smoothResetToInitialState === 'function') {
+                    window.live2dManager.smoothResetToInitialState().catch(e => {
+                        console.warn('[ModelManager] 平滑恢复失败:', e);
+                        if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                            window.live2dManager.clearExpression();
+                        }
+                    });
+                } else if (window.live2dManager && typeof window.live2dManager.clearExpression === 'function') {
+                    window.live2dManager.clearExpression();
+                }
+            }, 5000);
         } catch (error) {
             console.error('播放表情失败:', error);
             showStatus(t('live2d.playExpressionFailed', `播放表情失败: ${expressionName}`, { expression: expressionName }), 2000);
@@ -3183,7 +3552,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         } else {
             // Live2D模式下需要currentModelInfo
-            if (!currentModelInfo) return;
+            if (!currentModelInfo) {
+                showStatus(t('live2d.pleaseSelectModel', '请先选择模型'), 2000);
+                return;
+            }
         }
 
         showStatus(t('live2d.savingSettings', '正在保存设置...'));
@@ -3263,7 +3635,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 情感配置按钮
     if (emotionConfigBtn) {
         emotionConfigBtn.addEventListener('click', () => {
-            // 打开情感映射管理器页面
+            // 打开Live2D情感映射管理器页面
             const width = 900;
             const height = 800;
             const left = (screen.width - width) / 2;
@@ -3271,6 +3643,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.open(
                 '/live2d_emotion_manager',
                 'emotionManager',
+                `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+            );
+        });
+    }
+
+    // VRM情感配置按钮
+    const vrmEmotionConfigBtn = document.getElementById('vrm-emotion-config-btn');
+    if (vrmEmotionConfigBtn) {
+        vrmEmotionConfigBtn.addEventListener('click', () => {
+            // 打开VRM情感映射管理器页面
+            const width = 900;
+            const height = 800;
+            const left = (screen.width - width) / 2;
+            const top = (screen.height - height) / 2;
+            window.open(
+                '/vrm_emotion_manager',
+                'vrmEmotionManager',
                 `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
             );
         });
@@ -3373,7 +3762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (result.success) {
                     showStatus(t('live2d.uploadMotionSuccess', `动作文件 ${result.filename} 上传成功`, { filename: result.filename }), 2000);
-                    
+
                     // 重新获取模型文件列表并更新下拉菜单
                     try {
                         let apiUrl = '';
@@ -3441,7 +3830,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (result.success) {
                     showStatus(t('live2d.uploadVRMAnimationSuccess', `VRM动作文件 ${result.filename} 上传成功`, { filename: result.filename }), 2000);
-                    
+
                     // 重新加载动作列表
                     try {
                         animationsLoaded = false; // 重置标记，强制重新加载
@@ -3492,7 +3881,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (result.success) {
                     showStatus(t('live2d.uploadExpressionSuccess', `表情文件 ${result.filename} 上传成功`, { filename: result.filename }), 2000);
-                    
+
                     // 重新获取模型文件列表并更新下拉菜单
                     try {
                         let apiUrl = '';
@@ -3571,10 +3960,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                             option.value = model.name;
                             // 使用display_name（如果存在）显示更友好的名称
                             option.textContent = model.display_name || model.name;
+                            if (model.item_id) {
+                                option.dataset.itemId = model.item_id;
+                            }
                             modelSelect.appendChild(option);
                         });
 
-                        
+
                         // 自动选择新上传的模型
                         if (result.model_name) {
                             modelSelect.value = result.model_name;
@@ -3831,11 +4223,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const item = document.createElement('div');
                     item.className = 'model-item';
 
+                    // 检查是否是当前绑定的模型
+                    const isBound = currentModelInfo && currentModelInfo.name === model.name;
+
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.id = safeId;
                     checkbox.value = model.name;
                     checkbox.setAttribute('data-path', model.path);
+
+                    if (isBound) {
+                        checkbox.disabled = true;
+                        checkbox.title = t('live2d.cannotDeleteBoundModel', '无法删除当前正在使用的模型');
+                    }
 
                     const label = document.createElement('label');
                     label.setAttribute('for', safeId);
@@ -3844,6 +4244,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const sourceSpan = document.createElement('span');
                     sourceSpan.className = 'model-source';
                     sourceSpan.textContent = sourceLabel;
+
+                    // 显示"使用中"标签
+                    if (isBound) {
+                        const boundBadge = document.createElement('span');
+                        boundBadge.className = 'model-source';
+                        boundBadge.style.color = 'var(--brand-blue, #4a9eff)';
+                        boundBadge.style.fontWeight = 'bold';
+                        boundBadge.textContent = t('live2d.modelInUse', '使用中');
+                        item.appendChild(boundBadge);
+                        item.style.opacity = '0.6';
+                    }
 
                     checkbox.addEventListener('change', (e) => {
                         if (e.target.checked) {
@@ -3878,6 +4289,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function deleteSelectedModels() {
         if (selectedDeleteModels.size === 0) return;
+
+        // 安全防护：移除当前绑定的模型，不允许删除
+        if (currentModelInfo && currentModelInfo.name) {
+            if (selectedDeleteModels.has(currentModelInfo.name)) {
+                selectedDeleteModels.delete(currentModelInfo.name);
+                showStatus(t('live2d.cannotDeleteBoundModel', '无法删除当前正在使用的模型'), 2000);
+                updateConfirmDeleteButton();
+                if (selectedDeleteModels.size === 0) return;
+            }
+        }
 
         const message = t('live2d.confirmDelete', '确定要删除选中的 {{count}} 个模型吗？此操作不可恢复。', { count: selectedDeleteModels.size });
         const title = t('live2d.deleteModelTitle', '删除已导入模型');
@@ -4053,13 +4474,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     persistentList.innerHTML = '';
                     persistentExpressions.forEach(file => {
                         const item = document.createElement('div');
-                        item.style.cssText = 'padding: 4px 8px; margin: 2px 0; background: #f0f0f0; border-radius: 4px; font-size: 12px; display: flex; justify-content: space-between; align-items: center;';
+                        item.className = 'persistent-item';
                         const fileName = file.split('/').pop().replace('.exp3.json', '');
                         const nameSpan = document.createElement('span');
                         nameSpan.textContent = fileName;
                         const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'persistent-delete-btn';
                         deleteBtn.textContent = t('live2d.delete', '删除');
-                        deleteBtn.style.cssText = 'background: #dc3545; color: white; border: none; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px;';
                         deleteBtn.addEventListener('click', () => removePersistentExpression(file));
                         item.appendChild(nameSpan);
                         item.appendChild(deleteBtn);
@@ -4209,7 +4630,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (disabled) expressionManager.disable();
             else expressionManager.enable();
         }
-        
+
         // 原有的控制逻辑（保留兼容性）
         motionSelect.disabled = disabled;
         const motionSelectBtn = document.getElementById('motion-select-btn');
@@ -4234,7 +4655,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (type === 'expression') {
             firstOptionText = t('live2d.selectExpression', '选择表情');
         }
-        
+
         select.innerHTML = `<option value="">${firstOptionText}</option>`;
         options.forEach(opt => {
             const option = document.createElement('option');
@@ -4251,7 +4672,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             select.appendChild(option);
         });
-        
+
         // 更新对应的管理器
         if (type === 'motion' && motionManager) {
             motionManager.updateButtonText();
@@ -4511,7 +4932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // 更优雅的策略：设置选择器值，然后触发 change 事件
                 // 让 change 事件处理程序统一处理所有加载逻辑（加载模型、启用按钮、加载动作/表情等）
                 // 这样避免代码重复，也确保所有后续步骤都被正确执行
-                
+
                 if (vrmModelSelect) {
                     // 提取文件名用于匹配
                     const vrmFilename = vrmModelPath.split(/[/\\]/).pop();

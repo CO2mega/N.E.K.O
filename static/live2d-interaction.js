@@ -5,7 +5,7 @@
 // ===== 自动吸附功能配置 =====
 const SNAP_CONFIG = {
     // 吸附阈值：模型在屏幕内剩余的像素小于此值时触发吸附（即模型绝大部分超出屏幕）
-    threshold: 50,
+    threshold: 200,
     // 吸附边距：吸附后距离屏幕边缘的最小距离
     margin: 5,
     // 动画持续时间（毫秒）
@@ -47,7 +47,7 @@ const EasingFunctions = {
 Live2DManager.prototype._checkSnapRequired = async function (model, options = {}) {
     if (!model) return null;
 
-    const { afterDisplaySwitch = false } = options;
+    const { afterDisplaySwitch = false, threshold: customThreshold } = options;
 
     try {
         const bounds = model.getBounds();
@@ -87,7 +87,7 @@ Live2DManager.prototype._checkSnapRequired = async function (model, options = {}
         // 检查是否有任何边超出阈值
         // 新逻辑：只有当模型在屏幕内剩余的部分小于 threshold 时才触发吸附
         // 即模型绝大部分都超出屏幕时才吸附
-        const threshold = SNAP_CONFIG.threshold;
+        const threshold = customThreshold ?? SNAP_CONFIG.threshold;
         const margin = SNAP_CONFIG.margin;
 
         // 计算模型在屏幕内剩余的像素数
@@ -250,6 +250,9 @@ Live2DManager.prototype._performSnapAnimation = function (model, snapInfo) {
  * @returns {Promise<boolean>} 是否执行了吸附
  */
 Live2DManager.prototype._checkAndPerformSnap = async function (model, options = {}) {
+    if (!this._isModelReadyForInteraction && !options.allowWhenNotReady) {
+        return false;
+    }
     // 如果正在执行吸附动画，跳过
     if (this._isSnapping) {
         return false;
@@ -452,10 +455,15 @@ Live2DManager.prototype.setupDragAndDrop = function (model) {
                             return;
                         }
                         
-                        console.log('[Interaction] 点击效果持续时间结束，恢复到默认状态');
+                        console.log('[Interaction] 点击效果持续时间结束，平滑恢复到默认状态');
                         this._currentClickEffectId = null;
-                        // 清除表情，恢复到常驻表情或默认状态
-                        if (this.clearExpression) {
+                        // 使用平滑过渡恢复到常驻表情或默认状态（smoothReset 内部会在快照后停止 motion/expression）
+                        if (typeof this.smoothResetToInitialState === 'function') {
+                            this.smoothResetToInitialState().catch(e => {
+                                console.warn('[Interaction] 平滑恢复失败，回退到即时恢复:', e);
+                                if (typeof this.clearExpression === 'function') this.clearExpression();
+                            });
+                        } else if (typeof this.clearExpression === 'function') {
                             this.clearExpression();
                         }
                     }, CLICK_EFFECT_DURATION);
@@ -499,6 +507,7 @@ Live2DManager.prototype.setupDragAndDrop = function (model) {
     };
 
     model.on('pointerdown', (event) => {
+        if (!this._isModelReadyForInteraction) return;
         if (this.isLocked) return;
 
         // 检测是否为触摸事件，且是多点触摸（双指缩放）
@@ -529,10 +538,10 @@ Live2DManager.prototype.setupDragAndDrop = function (model) {
     const onDragEnd = async () => {
         if (isDragging) {
             isDragging = false;
-            document.getElementById('live2d-canvas').style.cursor = 'grab';
-
-            // 拖拽结束后恢复按钮的 pointer-events
+            document.getElementById('live2d-canvas').style.cursor = '';
             restoreButtonPointerEvents();
+
+            if (!this._isModelReadyForInteraction) return;
 
             // 检测是否为点击（非拖拽）
             const clickDuration = Date.now() - clickStartTime;
@@ -562,12 +571,13 @@ Live2DManager.prototype.setupDragAndDrop = function (model) {
     };
 
     const onDragMove = (event) => {
+        if (!this._isModelReadyForInteraction) return;
         if (isDragging) {
             // 再次检查是否变成多点触摸
             if (event.touches && event.touches.length > 1) {
                 // 如果变成多点触摸，停止拖拽
                 isDragging = false;
-                document.getElementById('live2d-canvas').style.cursor = 'grab';
+                document.getElementById('live2d-canvas').style.cursor = '';
                 return;
             }
 
@@ -613,7 +623,14 @@ Live2DManager.prototype.setupWheelZoom = function (model) {
     const onWheelScroll = (event) => {
         if (this.isLocked || !this.currentModel) return;
         event.preventDefault();
-        const scaleFactor = 1.1;
+
+        // 根据 deltaY 大小动态计算缩放因子，避免固定倍率导致缩放过快
+        // 鼠标滚轮通常 deltaY ≈ ±100，触控板 deltaY ≈ ±1~30
+        const absDelta = Math.abs(event.deltaY);
+        // 将 deltaY 映射到 0~0.08 的缩放增量（最大约 8%）
+        const zoomStep = Math.min(absDelta / 1000, 0.08);
+        const scaleFactor = 1 + zoomStep;
+
         const oldScale = this.currentModel.scale.x;
         let newScale = event.deltaY < 0 ? oldScale * scaleFactor : oldScale / scaleFactor;
         this.currentModel.scale.set(newScale);
@@ -728,6 +745,7 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
             return;
         }
 
+        // isFocusing 用于控制眼睛跟踪，悬浮菜单显示不受影响
         this.isFocusing = true;
         if (lockIcon) lockIcon.style.display = 'block';
         // 锁定状态下不显示浮动菜单
@@ -744,6 +762,16 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
     const startHideTimer = (delay = 1000) => {
         const lockIcon = document.getElementById('live2d-lock-icon');
         const floatingButtons = document.getElementById('live2d-floating-buttons');
+        const isPointerNearLock = () => {
+            if (!lockIcon || lockIcon.style.display !== 'block') return false;
+            const x = this._lastMouseX;
+            const y = this._lastMouseY;
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+            const rect = lockIcon.getBoundingClientRect();
+            const expandPx = 8;
+            return x >= rect.left - expandPx && x <= rect.right + expandPx &&
+                y >= rect.top - expandPx && y <= rect.bottom + expandPx;
+        };
 
         if (this._goodbyeClicked) return;
 
@@ -761,7 +789,7 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
             }
 
             // 再次检查鼠标是否在按钮区域内
-            if (this._isMouseOverButtons) {
+            if (this._isMouseOverButtons || isPointerNearLock()) {
                 // 鼠标在按钮上，不隐藏，重新启动定时器
                 this._hideButtonsTimer = null;
                 startHideTimer(delay);
@@ -836,6 +864,7 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
 
     // 方法2：同时保留 window 的 pointermove 监听（适用于普通浏览器）
     const onPointerMove = (event) => {
+        if (!this._isModelReadyForInteraction) return;
         // 更新 Ctrl 键状态：综合事件中的状态和本地状态
         // 如果是真实事件，更新本地状态；如果是模拟事件，本地状态保持不变（除非事件里带了 Ctrl）
         if (event.isTrusted) {
@@ -888,6 +917,8 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
         
         // 使用 clientX/Y 作为全局坐标
         const pointer = { x: event.clientX, y: event.clientY };
+        this._lastMouseX = pointer.x;
+        this._lastMouseY = pointer.y;
 
         // 在拖拽期间不执行任何操作
         if (model.interactive && model.dragging) {
@@ -964,17 +995,28 @@ Live2DManager.prototype.enableMouseTracking = function (model, options = {}) {
             const shouldFade = this.isLocked && ctrlKeyPressed && distance < HoverFadethreshold;
             setLockedHoverFade(shouldFade);
 
+            const canvasEl = document.getElementById('live2d-canvas');
             if (distance < threshold) {
                 showButtons();
+                if (canvasEl && !this.isLocked && !(model.interactive && model.dragging)) {
+                    canvasEl.style.cursor = 'grab';
+                }
                 // 只有当鼠标在模型附近时才调用 focus，避免 Electron 透明窗口中的全局跟踪问题
+                // 同时检查鼠标跟踪是否启用
+                const isMouseTrackingEnabled = this.isMouseTrackingEnabled ? this.isMouseTrackingEnabled() : (window.mouseTrackingEnabled !== false);
                 if (this.isFocusing) {
-                    model.focus(pointer.x, pointer.y);
+                    if (isMouseTrackingEnabled) {
+                        model.focus(pointer.x, pointer.y);
+                    } else {
+                        model.focus(centerX, centerY);
+                    }
                 }
             } else {
                 // 鼠标离开模型区域，启动隐藏定时器
                 this.isFocusing = false;
-                const lockIcon = document.getElementById('live2d-lock-icon');
-                if (lockIcon) lockIcon.style.display = 'none';
+                if (canvasEl && !(model.interactive && model.dragging)) {
+                    canvasEl.style.cursor = '';
+                }
                 startHideTimer();
             }
         } catch (error) {
@@ -1087,26 +1129,15 @@ Live2DManager.prototype._playTemporaryClickEffect = async function(emotion, prio
         }
 
         if (expressionFiles.length > 0) {
-            const choiceFile = this.getRandomElement(expressionFiles);
-            if (choiceFile) {
-                // 在 FileReferences 中查找匹配的表情名称
-                let expressionName = null;
-                if (this.fileReferences && this.fileReferences.Expressions) {
-                    for (const expr of this.fileReferences.Expressions) {
-                        if (expr.File === choiceFile) {
-                            expressionName = expr.Name;
-                            break;
-                        }
-                    }
-                }
-                
-                if (!expressionName) {
-                    const base = String(choiceFile).split('/').pop() || '';
-                    expressionName = base.replace('.exp3.json', '');
-                }
+            // 跳过已确认失效的 expression，避免每次点击都重复 404
+            if (typeof this.isExpressionFileMissing === 'function') {
+                expressionFiles = expressionFiles.filter(file => !this.isExpressionFileMissing(file));
+            }
 
-                console.log(`[ClickEffect] 播放临时表情: ${expressionName}`);
-                await this.currentModel.expression(expressionName);
+            const choiceFile = this.getRandomElement(expressionFiles);
+            if (choiceFile && typeof this.playExpression === 'function') {
+                console.log(`[ClickEffect] 播放临时表情: ${choiceFile}`);
+                await this.playExpression(emotion, choiceFile);
             }
         }
 
@@ -1153,29 +1184,22 @@ Live2DManager.prototype._playTemporaryClickEffect = async function(emotion, prio
                 return;
             }
             
-            console.log('[ClickEffect] 临时效果结束，恢复到默认状态');
+            console.log('[ClickEffect] 临时效果结束，平滑恢复到默认状态');
             this._currentClickEffectId = null;
-            
-            const motionToStop = this._clickEffectMotion;
             this._clickEffectMotion = null;
-            if (motionToStop && typeof motionToStop.stop === 'function') {
-                try { motionToStop.stop(); } catch (e) {}
-            }
-            
-            try {
-                const expressionManager = this.currentModel &&
-                    this.currentModel.internalModel &&
-                    this.currentModel.internalModel.motionManager &&
-                    this.currentModel.internalModel.motionManager.expressionManager;
-                if (expressionManager && typeof expressionManager.stopAllExpressions === 'function') {
-                    expressionManager.stopAllExpressions();
-                }
-            } catch (e) {
-                console.warn('[ClickEffect] Failed to stop expressions on currentModel:', e);
-            }
 
-            if (typeof this.applyPersistentExpressionsNative === 'function') {
-                try { this.applyPersistentExpressionsNative(true); } catch (e) {}
+            // 使用平滑过渡恢复到初始状态
+            // smoothResetToInitialState 会在第一帧 beforeModelUpdate 中捕获快照后，
+            // 再停止 motion/expression，确保过渡起点与屏幕一致，无视觉跳变。
+            if (typeof this.smoothResetToInitialState === 'function') {
+                this.smoothResetToInitialState().catch(e => {
+                    console.warn('[ClickEffect] 平滑恢复失败，回退到即时恢复:', e);
+                    if (typeof this.clearExpression === 'function') {
+                        this.clearExpression();
+                    }
+                });
+            } else if (typeof this.clearExpression === 'function') {
+                this.clearExpression();
             }
         }, duration);
 
@@ -1238,8 +1262,18 @@ Live2DManager.prototype._savePositionAfterInteraction = async function () {
         }
     }
 
+    // 使用渲染器逻辑尺寸作为归一化基准（renderer 不再自动 resize，尺寸与稳定屏幕分辨率等价）
+    let viewportInfo = null;
+    if (this.pixi_app && this.pixi_app.renderer) {
+        const rw = this.pixi_app.renderer.screen.width;
+        const rh = this.pixi_app.renderer.screen.height;
+        if (Number.isFinite(rw) && Number.isFinite(rh) && rw > 0 && rh > 0) {
+            viewportInfo = { width: rw, height: rh };
+        }
+    }
+
     // 异步保存，不阻塞交互
-    this.saveUserPreferences(this._lastLoadedModelPath, position, scale, null, displayInfo)
+    this.saveUserPreferences(this._lastLoadedModelPath, position, scale, null, displayInfo, viewportInfo)
         .then(success => {
             if (success) {
                 console.debug('模型位置和缩放已自动保存');
@@ -1384,43 +1418,7 @@ Live2DManager.prototype._checkAndSwitchDisplay = async function (model) {
     }
 };
 
-/**
- * 设置窗口大小改变时的自动吸附检测
- * 当窗口/屏幕大小改变时，检测模型是否超出边界并执行吸附
- */
-Live2DManager.prototype.setupResizeSnapDetection = function () {
-    // 防止重复绑定
-    if (this._resizeSnapHandler) {
-        window.removeEventListener('resize', this._resizeSnapHandler);
-    }
-
-    // 防抖动的 resize 处理函数
-    let resizeTimeout = null;
-
-    this._resizeSnapHandler = () => {
-        // 如果正在拖拽或吸附，跳过
-        if (this._isSnapping) return;
-
-        // 清除之前的定时器
-        if (resizeTimeout) {
-            clearTimeout(resizeTimeout);
-        }
-
-        // 延迟执行，避免频繁触发
-        resizeTimeout = setTimeout(async () => {
-            if (!this.currentModel) return;
-
-            console.debug('[Live2D] 窗口大小改变，检测是否需要吸附');
-
-            // 执行吸附检测
-            await this._checkAndPerformSnap(this.currentModel);
-        }, 300);
-    };
-
-    window.addEventListener('resize', this._resizeSnapHandler);
-
-    console.debug('[Live2D] 已启用窗口大小改变时的自动吸附检测');
-};
+// setupResizeSnapDetection 已移除：渲染器仅在真实屏幕分辨率变化时 resize，不再需要吸附检测
 
 /**
  * 手动触发吸附检测（供外部调用）
@@ -1510,11 +1508,7 @@ Live2DManager.prototype.cleanupEventListeners = function () {
         this._windowBlurListener = null;
     }
 
-    // 清理 resize 监听器
-    if (this._resizeSnapHandler) {
-        window.removeEventListener('resize', this._resizeSnapHandler);
-        this._resizeSnapHandler = null;
-    }
+    // resize 吸附监听器已移除（setupResizeSnapDetection 不再存在）
 
     // 清理 canvas 上的滚轮和触摸监听器
     if (this.pixi_app && this.pixi_app.view) {

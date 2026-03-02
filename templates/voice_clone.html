@@ -8,6 +8,8 @@
     <!-- i18next 加载器（统一处理 CDN 加载和初始化） -->
     <script src="/static/i18n-i18next.js"></script>
     <link rel="stylesheet" href="/static/css/voice_clone.css">
+    <link rel="stylesheet" href="/static/css/dark-mode.css">
+    <script src="/static/theme-manager.js"></script>
 </head>
 <body>
     <div class="container">
@@ -23,7 +25,7 @@
             </div>
             <label style="display: flex; align-items: center; gap: 8px;">
                 <img src="/static/icons/exclamation.png" alt="" style="width: 48px; height: 48px; flex-shrink: 0;">
-                <span data-i18n="voice.selectFile">选择本地音频文件（15秒最佳，请勿超过30秒，wav/mp3格式）</span>
+                <span data-i18n="voice.selectFile">选择本地音频文件（8秒最佳，请勿超过20秒，wav/mp3格式）</span>
             </label>
             <div class="file-input-wrapper">
                 <input type="file" id="audioFile" accept="audio/*">
@@ -74,7 +76,7 @@
                         <span data-i18n="voice.refresh">刷新</span>
                     </button>
                 </div>
-                <div id="voice-list-container" style="background: white; border-radius: 8px; padding: 16px; min-height: 100px; max-height: 400px; overflow-y: auto; border: 1px solid #ccc;">
+                <div id="voice-list-container" class="voice-list-bg" style="border-radius: 8px; padding: 16px; min-height: 100px; max-height: 400px; overflow-y: auto;">
                     <div style="text-align: center; color: #999; padding: 20px;" id="voice-list-loading">
                         <span data-i18n="voice.loading">加载中...</span>
                     </div>
@@ -83,6 +85,71 @@
         </div>
     </div>
     <script src="/static/js/voice_clone.js"></script>
+    <script src="/static/js/voice_silence_remover.js"></script>
+
+    <!-- 智能静音移除模态对话框 -->
+    <div id="silenceModal" class="silence-modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="silenceModalTitle">
+        <div class="silence-modal">
+            <div class="silence-modal-header">
+                <h3 id="silenceModalTitle" data-i18n="voice.silenceModal.title">智能空白音频检测结果</h3>
+                <button class="silence-modal-close" onclick="closeSilenceModal()" aria-label="Close">&times;</button>
+            </div>
+            <div class="silence-modal-body">
+                <!-- 分析结果 -->
+                <div id="silenceAnalysisResult" class="silence-analysis-result">
+                    <div class="silence-stat-row">
+                        <span class="silence-stat-label" data-i18n="voice.silenceModal.originalDuration">原始音频总时长</span>
+                        <span class="silence-stat-value" id="silenceOriginalDuration">--:--</span>
+                    </div>
+                    <div class="silence-stat-row">
+                        <span class="silence-stat-label" data-i18n="voice.silenceModal.silenceDuration">可移除空白总时长</span>
+                        <span class="silence-stat-value silence-removable" id="silenceSilenceDuration">--:--</span>
+                    </div>
+                    <div class="silence-stat-row">
+                        <span class="silence-stat-label" data-i18n="voice.silenceModal.estimatedDuration">处理后预计剩余时长</span>
+                        <span class="silence-stat-value silence-remaining" id="silenceEstimatedDuration">--:--</span>
+                    </div>
+                    <div class="silence-stat-row saving-highlight">
+                        <span class="silence-stat-label" data-i18n="voice.silenceModal.savingPercentage">节省比例</span>
+                        <span class="silence-stat-value" id="silenceSavingPct">0%</span>
+                    </div>
+                </div>
+
+                <!-- 进度条 (裁剪时显示) -->
+                <div id="silenceProgressSection" class="silence-progress-section" style="display: none;">
+                    <div class="silence-progress-bar-bg">
+                        <div class="silence-progress-bar" id="silenceProgressBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="silence-progress-text">
+                        <span id="silenceProgressPct">0%</span>
+                        <span id="silenceProgressPhase" data-i18n="voice.silenceModal.processing">处理中...</span>
+                    </div>
+                </div>
+
+                <!-- 处理完成后的下载按钮 -->
+                <div id="silenceDownloadSection" class="silence-download-section" style="display: none;">
+                    <div class="silence-success-msg">
+                        <span data-i18n="voice.silenceModal.trimSuccess">✅ 裁剪完成！</span>
+                        <span id="silenceMd5" class="silence-md5"></span>
+                    </div>
+                    <button class="silence-download-btn" id="silenceDownloadBtn" onclick="downloadTrimmedAudio()">
+                        <span data-i18n="voice.silenceModal.downloadTrimmed">下载已处理音频</span>
+                    </button>
+                </div>
+            </div>
+            <div class="silence-modal-footer" id="silenceModalFooter">
+                <button class="silence-btn-trim" id="silenceBtnTrim" onclick="useTrimmedAudio()">
+                    <span data-i18n="voice.silenceModal.useTrimmed">使用智能裁剪音频</span>
+                </button>
+                <button class="silence-btn-original" id="silenceBtnOriginal" onclick="useOriginalAudio()">
+                    <span data-i18n="voice.silenceModal.useOriginal">上传原音频</span>
+                </button>
+                <button class="silence-btn-cancel" id="silenceBtnCancel" onclick="cancelTrimTask()" style="display: none;">
+                    <span data-i18n="voice.silenceModal.cancel">取消</span>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Driver.js 库 -->
     <script src="/static/libs/driver.min.js"></script>

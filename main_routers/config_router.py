@@ -10,23 +10,39 @@ Handles configuration-related API endpoints including:
 """
 
 import json
-import logging
 import os
 
-from pathlib import Path
 from fastapi import APIRouter, Request
 
 from .shared_state import get_config_manager, get_steamworks, get_session_manager, get_initialize_character_data
 from .characters_router import get_current_live2d_model
 from utils.preferences import load_user_preferences, update_model_preferences, validate_model_preferences, move_model_to_top
+from utils.logger_config import get_module_logger
+from utils.config_manager import get_reserved
+from config import (
+    CHARACTER_SYSTEM_RESERVED_FIELDS,
+    CHARACTER_WORKSHOP_RESERVED_FIELDS,
+    CHARACTER_RESERVED_FIELDS,
+)
 
 
 router = APIRouter(prefix="/api/config", tags=["config"])
-logger = logging.getLogger("Main")
+logger = get_module_logger(__name__, "Main")
 
 # VRM 模型路径常量
 VRM_STATIC_PATH = "/static/vrm"  # 项目目录下的 VRM 模型路径
 VRM_USER_PATH = "/user_vrm"  # 用户文档目录下的 VRM 模型路径
+
+
+@router.get("/character_reserved_fields")
+async def get_character_reserved_fields():
+    """返回角色档案保留字段配置（供前端与路由统一使用）。"""
+    return {
+        "success": True,
+        "system_reserved_fields": list(CHARACTER_SYSTEM_RESERVED_FIELDS),
+        "workshop_reserved_fields": list(CHARACTER_WORKSHOP_RESERVED_FIELDS),
+        "all_reserved_fields": list(CHARACTER_RESERVED_FIELDS),
+    }
 
 
 @router.get("/page_config")
@@ -42,21 +58,35 @@ async def get_page_config(lanlan_name: str = ""):
         
         # 获取角色配置
         catgirl_config = lanlan_basic_config.get(target_name, {})
-        model_type = catgirl_config.get('model_type', 'live2d')  # 默认为live2d以保持兼容性
+        model_type = get_reserved(catgirl_config, 'avatar', 'model_type', default='live2d', legacy_keys=('model_type',))
         
         model_path = ""
         
         # 根据模型类型获取模型路径
         if model_type == 'vrm':
             # VRM模型：处理路径转换
-            vrm_path = catgirl_config.get('vrm', '')
+            vrm_path = get_reserved(catgirl_config, 'avatar', 'vrm', 'model_path', default='', legacy_keys=('vrm',))
             if vrm_path:
                 if vrm_path.startswith('http://') or vrm_path.startswith('https://'):
                     model_path = vrm_path
                     logger.debug(f"获取页面配置 - 角色: {target_name}, VRM模型HTTP路径: {model_path}")
                 elif vrm_path.startswith('/'):
-                    model_path = vrm_path
-                    logger.debug(f"获取页面配置 - 角色: {target_name}, VRM模型绝对路径: {model_path}")
+                    # 对已知前缀的路径验证文件是否实际存在，防止返回指向已删除文件的路径
+                    _vrm_file_verified = False
+                    if vrm_path.startswith(VRM_USER_PATH + '/'):
+                        _fname = vrm_path[len(VRM_USER_PATH) + 1:]
+                        _vrm_file_verified = (_config_manager.vrm_dir / _fname).exists()
+                    elif vrm_path.startswith(VRM_STATIC_PATH + '/'):
+                        _fname = vrm_path[len(VRM_STATIC_PATH) + 1:]
+                        _vrm_file_verified = (_config_manager.project_root / 'static' / 'vrm' / _fname).exists()
+                    else:
+                        _vrm_file_verified = True  # 未知前缀，不做判断
+                    if _vrm_file_verified:
+                        model_path = vrm_path
+                        logger.debug(f"获取页面配置 - 角色: {target_name}, VRM模型绝对路径: {model_path}")
+                    else:
+                        model_path = ""
+                        logger.warning(f"获取页面配置 - 角色: {target_name}, VRM模型文件未找到: {vrm_path}")
                 else:
                     filename = os.path.basename(vrm_path)
                     project_root = _config_manager.project_root
@@ -78,8 +108,14 @@ async def get_page_config(lanlan_name: str = ""):
                 logger.warning(f"角色 {target_name} 的VRM模型路径为空")
         else:
             # Live2D模型：使用原有逻辑
-            live2d = catgirl_config.get('live2d', 'mao_pro')
-            live2d_item_id = catgirl_config.get('live2d_item_id', '')
+            live2d = get_reserved(catgirl_config, 'avatar', 'live2d', 'model_path', default='mao_pro', legacy_keys=('live2d',))
+            live2d_item_id = get_reserved(
+                catgirl_config,
+                'avatar',
+                'asset_source_id',
+                default='',
+                legacy_keys=('live2d_item_id', 'item_id'),
+            )
             
             logger.debug(f"获取页面配置 - 角色: {target_name}, Live2D模型: {live2d}, item_id: {live2d_item_id}")
         
@@ -132,9 +168,25 @@ async def save_preferences(request: Request):
         display = data.get('display')
         # 获取旋转信息（可选，用于VRM模型朝向）
         rotation = data.get('rotation')
-        
+        # 获取视口信息（可选，用于跨分辨率位置和缩放归一化）
+        viewport = data.get('viewport')
+        # 获取相机位置信息（可选，用于恢复VRM滚轮缩放状态）
+        camera_position = data.get('camera_position')
+
+        # 验证和清理 viewport 数据
+        if viewport is not None:
+            if not isinstance(viewport, dict):
+                viewport = None
+            else:
+                # 验证必需的数值字段
+                width = viewport.get('width')
+                height = viewport.get('height')
+                if not (isinstance(width, (int, float)) and isinstance(height, (int, float)) and
+                        width > 0 and height > 0):
+                    viewport = None
+
         # 更新偏好
-        if update_model_preferences(data['model_path'], data['position'], data['scale'], parameters, display, rotation):
+        if update_model_preferences(data['model_path'], data['position'], data['scale'], parameters, display, rotation, viewport, camera_position):
             return {"success": True, "message": "偏好设置已保存"}
         else:
             return {"success": False, "error": "保存失败"}
@@ -202,7 +254,6 @@ async def get_steam_language():
         # 使用 language_utils 的归一化函数，统一映射逻辑
         # format='full' 返回 'zh-CN', 'zh-TW', 'en', 'ja', 'ko' 格式（用于前端 i18n）
         i18n_language = normalize_language_code(steam_language, format='full')
-        logger.info(f"[i18n] Steam 语言映射: '{steam_language}' -> '{i18n_language}'")
         
         # 获取用户 IP 所在国家（用于判断是否为中国大陆用户）
         ip_country = None
@@ -212,30 +263,26 @@ async def get_steam_language():
             # 使用 Steam Utils API 获取用户 IP 所在国家
             raw_ip_country = steamworks.Utils.GetIPCountry()
             
-            # 醒目调试日志
-            print("=" * 60)
-            print(f"[GeoIP API DEBUG] Raw GetIPCountry() returned: {repr(raw_ip_country)}")
-            
             if isinstance(raw_ip_country, bytes):
                 ip_country = raw_ip_country.decode('utf-8')
-                print(f"[GeoIP API DEBUG] Decoded from bytes: '{ip_country}'")
             else:
                 ip_country = raw_ip_country
             
-            # 转为大写以便比较
             if ip_country:
                 ip_country = ip_country.upper()
-                # 判断是否为中国大陆（国家代码为 "CN"）
                 is_mainland_china = (ip_country == "CN")
-                print(f"[GeoIP API DEBUG] Country (upper): '{ip_country}'")
-                print(f"[GeoIP API DEBUG] Is mainland China: {is_mainland_china}")
-            else:
-                print(f"[GeoIP API DEBUG] Country is empty/None")
-            print("=" * 60)
             
-            logger.info(f"[GeoIP] 用户 IP 国家: {ip_country}, 是否大陆: {is_mainland_china}")
+            if not getattr(get_steam_language, '_logged', False) or not get_steam_language._logged:
+                get_steam_language._logged = True
+                logger.info(f"[GeoIP] 用户 IP 国家: {ip_country}, 是否大陆: {is_mainland_china}")
+            # Write back to ConfigManager so URL adjustment uses the same result
+            try:
+                from utils.config_manager import ConfigManager
+                ConfigManager._region_cache = not is_mainland_china
+            except Exception:
+                pass
         except Exception as geo_error:
-            print(f"[GeoIP API DEBUG] Exception: {geo_error}")
+            get_steam_language._logged = False
             logger.warning(f"[GeoIP] 获取用户 IP 国家失败: {geo_error}，默认为非大陆用户")
             ip_country = None
             is_mainland_china = False
@@ -322,27 +369,27 @@ async def get_core_config_api():
             "mcpToken": core_cfg.get('mcpToken', ''),  
             "enableCustomApi": core_cfg.get('enableCustomApi', False),  
             # 自定义API相关字段
-            "summaryModelProvider": core_cfg.get('summaryModelProvider', ''),
+            "conversationModelUrl": core_cfg.get('conversationModelUrl', ''),
+            "conversationModelId": core_cfg.get('conversationModelId', ''),
+            "conversationModelApiKey": core_cfg.get('conversationModelApiKey', ''),
             "summaryModelUrl": core_cfg.get('summaryModelUrl', ''),
             "summaryModelId": core_cfg.get('summaryModelId', ''),
             "summaryModelApiKey": core_cfg.get('summaryModelApiKey', ''),
-            "correctionModelProvider": core_cfg.get('correctionModelProvider', ''),
             "correctionModelUrl": core_cfg.get('correctionModelUrl', ''),
             "correctionModelId": core_cfg.get('correctionModelId', ''),
             "correctionModelApiKey": core_cfg.get('correctionModelApiKey', ''),
-            "emotionModelProvider": core_cfg.get('emotionModelProvider', ''),
             "emotionModelUrl": core_cfg.get('emotionModelUrl', ''),
             "emotionModelId": core_cfg.get('emotionModelId', ''),
             "emotionModelApiKey": core_cfg.get('emotionModelApiKey', ''),
-            "visionModelProvider": core_cfg.get('visionModelProvider', ''),
             "visionModelUrl": core_cfg.get('visionModelUrl', ''),
             "visionModelId": core_cfg.get('visionModelId', ''),
             "visionModelApiKey": core_cfg.get('visionModelApiKey', ''),
-            "omniModelProvider": core_cfg.get('omniModelProvider', ''),
+            "agentModelUrl": core_cfg.get('agentModelUrl', ''),
+            "agentModelId": core_cfg.get('agentModelId', ''),
+            "agentModelApiKey": core_cfg.get('agentModelApiKey', ''),
             "omniModelUrl": core_cfg.get('omniModelUrl', ''),
             "omniModelId": core_cfg.get('omniModelId', ''),
             "omniModelApiKey": core_cfg.get('omniModelApiKey', ''),
-            "ttsModelProvider": core_cfg.get('ttsModelProvider', ''),
             "ttsModelUrl": core_cfg.get('ttsModelUrl', ''),
             "ttsModelId": core_cfg.get('ttsModelId', ''),
             "ttsModelApiKey": core_cfg.get('ttsModelApiKey', ''),
@@ -434,48 +481,55 @@ async def update_core_config(request: Request):
             core_cfg['enableCustomApi'] = data['enableCustomApi']
         
         # 添加用户自定义API配置
-        if 'summaryModelProvider' in data:
-            core_cfg['summaryModelProvider'] = data['summaryModelProvider']
+        if 'conversationModelUrl' in data:
+            core_cfg['conversationModelUrl'] = data['conversationModelUrl']
+        if 'conversationModelId' in data:
+            core_cfg['conversationModelId'] = data['conversationModelId']
+        if 'conversationModelApiKey' in data:
+            core_cfg['conversationModelApiKey'] = data['conversationModelApiKey']
+            
         if 'summaryModelUrl' in data:
             core_cfg['summaryModelUrl'] = data['summaryModelUrl']
         if 'summaryModelId' in data:
             core_cfg['summaryModelId'] = data['summaryModelId']
         if 'summaryModelApiKey' in data:
             core_cfg['summaryModelApiKey'] = data['summaryModelApiKey']
-        if 'correctionModelProvider' in data:
-            core_cfg['correctionModelProvider'] = data['correctionModelProvider']
+            
         if 'correctionModelUrl' in data:
             core_cfg['correctionModelUrl'] = data['correctionModelUrl']
         if 'correctionModelId' in data:
             core_cfg['correctionModelId'] = data['correctionModelId']
         if 'correctionModelApiKey' in data:
             core_cfg['correctionModelApiKey'] = data['correctionModelApiKey']
-        if 'emotionModelProvider' in data:
-            core_cfg['emotionModelProvider'] = data['emotionModelProvider']
+            
         if 'emotionModelUrl' in data:
             core_cfg['emotionModelUrl'] = data['emotionModelUrl']
         if 'emotionModelId' in data:
             core_cfg['emotionModelId'] = data['emotionModelId']
         if 'emotionModelApiKey' in data:
             core_cfg['emotionModelApiKey'] = data['emotionModelApiKey']
-        if 'visionModelProvider' in data:
-            core_cfg['visionModelProvider'] = data['visionModelProvider']
+            
         if 'visionModelUrl' in data:
             core_cfg['visionModelUrl'] = data['visionModelUrl']
         if 'visionModelId' in data:
             core_cfg['visionModelId'] = data['visionModelId']
         if 'visionModelApiKey' in data:
             core_cfg['visionModelApiKey'] = data['visionModelApiKey']
-        if 'omniModelProvider' in data:
-            core_cfg['omniModelProvider'] = data['omniModelProvider']
+            
+        if 'agentModelUrl' in data:
+            core_cfg['agentModelUrl'] = data['agentModelUrl']
+        if 'agentModelId' in data:
+            core_cfg['agentModelId'] = data['agentModelId']
+        if 'agentModelApiKey' in data:
+            core_cfg['agentModelApiKey'] = data['agentModelApiKey']
+            
         if 'omniModelUrl' in data:
             core_cfg['omniModelUrl'] = data['omniModelUrl']
         if 'omniModelId' in data:
             core_cfg['omniModelId'] = data['omniModelId']
         if 'omniModelApiKey' in data:
             core_cfg['omniModelApiKey'] = data['omniModelApiKey']
-        if 'ttsModelProvider' in data:
-            core_cfg['ttsModelProvider'] = data['ttsModelProvider']
+            
         if 'ttsModelUrl' in data:
             core_cfg['ttsModelUrl'] = data['ttsModelUrl']
         if 'ttsModelId' in data:
@@ -529,6 +583,16 @@ async def update_core_config(request: Request):
             logger.error(f"重新加载配置失败: {reload_error}")
             return {"success": False, "error": f"配置已保存但重新加载失败: {str(reload_error)}"}
         
+        # 4. Notify agent_server to rebuild CUA adapter with fresh config
+        try:
+            import httpx
+            from config import TOOL_SERVER_PORT
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(f"http://127.0.0.1:{TOOL_SERVER_PORT}/notify_config_changed")
+            logger.info("已通知 agent_server 刷新 CUA 适配器")
+        except Exception as notify_err:
+            logger.warning(f"通知 agent_server 刷新 CUA 失败 (非致命): {notify_err}")
+
         logger.info(f"已通知 {notification_count} 个连接的客户端API配置已更新")
         return {"success": True, "message": "API Key已保存并重新加载配置", "sessions_ended": len(sessions_ended)}
     except Exception as e:
@@ -563,3 +627,46 @@ async def get_api_providers_config():
             "assist_api_providers": [],
         }
 
+
+@router.post("/gptsovits/list_voices")
+async def list_gptsovits_voices(request: Request):
+    """代理请求到 GPT-SoVITS v3 API 获取可用语音配置列表"""
+    import aiohttp
+    from urllib.parse import urlparse
+    import ipaddress
+    try:
+        data = await request.json()
+        api_url = data.get("api_url", "").rstrip("/")
+
+        if not api_url:
+            return {"success": False, "error": "api_url is required"}
+
+        # SSRF 防护：限制 api_url 只能是 localhost
+        parsed = urlparse(api_url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return {"success": False, "error": "Invalid api_url"}
+        host = parsed.hostname
+        try:
+            if not ipaddress.ip_address(host).is_loopback:
+                return {"success": False, "error": "api_url must be localhost"}
+        except ValueError:
+            if host not in ("localhost",):
+                return {"success": False, "error": "api_url must be localhost"}
+
+        endpoint = f"{api_url}/api/v3/voices"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(endpoint, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                try:
+                    result = await resp.json(content_type=None)
+                except Exception:
+                    text = await resp.text()
+                    return {"success": False, "error": f"Non-JSON response (HTTP {resp.status}): {text[:200]}"}
+                if resp.status == 200:
+                    return {"success": True, "voices": result}
+                return {"success": False, "error": f"HTTP {resp.status}: {str(result)[:200]}"}
+    except aiohttp.ClientError as e:
+        logger.error(f"GPT-SoVITS v3 API 请求失败: {e}")
+        return {"success": False, "error": f"Connection error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"获取 GPT-SoVITS 语音列表失败: {e}")
+        return {"success": False, "error": str(e)}

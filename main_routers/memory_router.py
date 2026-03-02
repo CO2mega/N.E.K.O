@@ -11,10 +11,10 @@ import os
 import re
 import json
 import glob
-import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Request
+from utils.logger_config import get_module_logger
 from fastapi.responses import JSONResponse
 
 
@@ -151,7 +151,8 @@ def safe_memory_path(memory_dir: Path, filename: str) -> tuple[Path | None, str]
         return resolved_path, ""
     except Exception as e:
         return None, f"路径验证失败: {str(e)}"
-logger = logging.getLogger("Main")
+
+logger = get_module_logger(__name__, "Main")
 
 
 @router.get('/recent_files')
@@ -252,7 +253,7 @@ async def save_recent_file(request: Request):
             try:
                 async with httpx.AsyncClient() as client:
                     await client.post(
-                        f"http://localhost:{MEMORY_SERVER_PORT}/cancel_correction/{catgirl_name}",
+                        f"http://127.0.0.1:{MEMORY_SERVER_PORT}/cancel_correction/{catgirl_name}",
                         timeout=2.0
                     )
                     logger.info(f"已发送取消 {catgirl_name} 记忆整理任务的请求")

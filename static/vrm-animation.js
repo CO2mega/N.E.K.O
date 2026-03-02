@@ -1,3 +1,15 @@
+/**
+    * VRM Animation - VRM 模型动画播放功能
+    *   功能:   
+    *  - 播放 VRM 模型动画
+    *  - 切换动画
+    *  - 设置动画播放速度
+    *  - 处理动画事件（如循环播放、淡入淡出）
+    *  - 管理模型骨骼动画（如 SpringBone 恢复）
+    *  - 同步口型动画（如 LipSync）
+    *  - 处理模型碰撞（如防止模型穿透）
+    */
+   
 // 确保 THREE 可用（使用 var 避免重复声明错误）
 var THREE = (typeof window !== 'undefined' && window.THREE) || (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
 
@@ -22,6 +34,7 @@ class VRMAnimation {
         this.playbackSpeed = 1.0;
         this.skeletonHelper = null;
         this.debug = false;
+        this.isIdleAnimation = false;  // 当前播放的是否为待机动画
         this.lipSyncActive = false;
         this.analyser = null;
         this.mouthExpressions = { 'aa': null, 'ih': null, 'ou': null, 'ee': null, 'oh': null };
@@ -478,6 +491,10 @@ class VRMAnimation {
             await this._createLookAtProxy(vrm);
             const clip = await this._createAndValidateAnimationClip(vrmAnimation, vrm);
             this._processTracksForVersion(clip, vrmVersion);
+
+            // 判断是否为待机动画（仅在显式传入 isIdle: true 时才视为待机）
+            this.isIdleAnimation = !!options.isIdle;
+
             const mixerRoot = this._findBestMixerRoot(vrm, clip);
             const newAction = this._createAndConfigureAction(clip, mixerRoot, options);
             this._playAction(newAction, options, vrm);
@@ -513,6 +530,7 @@ class VRMAnimation {
                     }
                     this.currentAction = null;
                     this.vrmaIsPlaying = false;
+                    this.isIdleAnimation = false;
                     this._fadeTimer = null;
 
                     // 动画停止后恢复物理
@@ -531,6 +549,7 @@ class VRMAnimation {
                 this.vrmaMixer.stopAllAction();
             }
             this.vrmaIsPlaying = false;
+            this.isIdleAnimation = false;
             this._restorePhysics();
         }
     }
@@ -685,6 +704,7 @@ class VRMAnimation {
 
         this.currentAction = null;
         this.vrmaIsPlaying = false;
+        this.isIdleAnimation = false;
     }
 
     dispose() {

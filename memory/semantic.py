@@ -1,13 +1,12 @@
 # from langchain_chroma import Chroma
 # ↑ 这个库引入了Chroma和onnx依赖，显著增大了一键包体积，暂时注释掉
-from typing import List
-from langchain_core.documents import Document
 from datetime import datetime
 from memory.recent import CompressedRecentHistoryManager
 from config import SEMANTIC_MODEL, RERANKER_MODEL, get_extra_body
 from utils.config_manager import get_config_manager
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from config.prompts_sys import semantic_manager_prompt
+from config.prompts_sys import semantic_manager_prompt, _loc, MEMORY_RECALL_HEADER, MEMORY_RESULTS_HEADER
+from utils.language_utils import get_global_language
 import json
 import asyncio
 from openai import APIConnectionError, InternalServerError, RateLimitError
@@ -50,7 +49,14 @@ class SemanticMemory:
             f"记忆片段{i} | \n{doc.page_content}\n"
             for i, doc in enumerate(await self.hybrid_search(query, lanlan_name))
         ])
-        return f"""======{lanlan_name}尝试回忆=====\n{query}\n\n====={lanlan_name}的相关记忆=====\n{results_text}"""
+        _lang = get_global_language()
+        return (
+            _loc(MEMORY_RECALL_HEADER, _lang).format(name=lanlan_name)
+            + query
+            + "\n\n"
+            + _loc(MEMORY_RESULTS_HEADER, _lang).format(name=lanlan_name)
+            + results_text
+        )
 
     async def rerank_results(self, query, results: list, k=5) -> list:
         # 使用LLM重新排序结果

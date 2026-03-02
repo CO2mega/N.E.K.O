@@ -303,6 +303,9 @@ const backToMainBtn = document.getElementById('backToMainBtn');
 // 状态栏定时器 ID
 let statusTimeoutId = null;
 
+// 是否已选择模型（用于区分初始状态和用户主动选择）
+let hasSelectedModel = false;
+
 // ===== 跨页面通信系统 =====
 // 使用 BroadcastChannel（如果可用）或 localStorage 作为后备
 const CHANNEL_NAME = 'neko_page_channel';
@@ -496,10 +499,22 @@ function updateModelDropdown() {
 // 更新按钮文字
 function updateModelSelectButtonText() {
     if (!modelSelectText || !modelSelect) return;
-    const selectedOption = modelSelect.options[modelSelect.selectedIndex];
-    const text = selectedOption ? selectedOption.textContent : t('live2d.parameterEditor.pleaseSelectModel', '选择模型');
-    modelSelectText.textContent = text;
-    modelSelectText.setAttribute('data-text', text);
+    
+    // 如果已选择模型
+    if (hasSelectedModel && modelSelect.value) {
+        const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+        const text = selectedOption ? selectedOption.textContent : modelSelect.value;
+        modelSelectText.textContent = text;
+        modelSelectText.setAttribute('data-text', text);
+        // 移除data-i18n属性，防止翻译系统覆盖模型名称
+        modelSelectText.removeAttribute('data-i18n');
+    } else {
+        // 没有选择模型时，使用默认文本并恢复data-i18n属性
+        const text = t('live2d.parameterEditor.selectModel', '选择模型');
+        modelSelectText.textContent = text;
+        modelSelectText.setAttribute('data-text', text);
+        modelSelectText.setAttribute('data-i18n', 'live2d.parameterEditor.selectModel');
+    }
 }
 
 // 缓存模型列表，避免重复请求
@@ -537,7 +552,7 @@ async function loadModelList() {
 
 function renderModelList(models) {
     if (models.length > 0) {
-        modelSelect.innerHTML = `<option value="">${t('live2d.parameterEditor.pleaseSelectModelOption', '选择模型')}</option>`;
+        modelSelect.innerHTML = '';
         models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.name;
@@ -918,6 +933,12 @@ function displayParameters() {
                 if (currentValue < minValue) minValue = currentValue;
                 if (currentValue > maxValue) maxValue = currentValue;
 
+                // 防止 min >= max 导致滑块无法拖动（例如某些参数范围为 [0, 0]）
+                if (minValue >= maxValue) {
+                    const epsilon = 0.1;
+                    maxValue = minValue + epsilon;
+                }
+
                 const paramItem = document.createElement('div');
                 paramItem.className = 'parameter-item';
 
@@ -974,14 +995,17 @@ function displayParameters() {
                 controlsBottom.appendChild(input);
                 controlsBottom.appendChild(resetBtn);
 
-                const updateParameter = (value) => {
+                const updateParameter = (value, source) => {
                     const numValue = parseFloat(value);
                     if (isNaN(numValue)) return;
 
                     const clampedValue = Math.max(minValue, Math.min(maxValue, numValue));
                     try {
                         coreModel.setParameterValueByIndex(i, clampedValue);
-                        slider.value = clampedValue;
+                        // 避免在拖拽滑块期间重设slider.value导致拖拽中断
+                        if (source !== 'slider') {
+                            slider.value = clampedValue;
+                        }
                         input.value = clampedValue;
                         currentParameters[paramId] = clampedValue;
                     } catch (e) {
@@ -989,16 +1013,24 @@ function displayParameters() {
                     }
                 };
 
+                // 阻止slider上的pointer/touch事件冒泡到Live2D画布，防止触发模型拖拽
+                slider.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                });
+                slider.addEventListener('touchstart', (e) => {
+                    e.stopPropagation();
+                }, { passive: false });
+
                 slider.addEventListener('input', (e) => {
-                    updateParameter(e.target.value);
+                    updateParameter(e.target.value, 'slider');
                 });
 
                 input.addEventListener('input', (e) => {
-                    updateParameter(e.target.value);
+                    updateParameter(e.target.value, 'input');
                 });
 
                 resetBtn.addEventListener('click', () => {
-                    updateParameter(initialValue);
+                    updateParameter(initialValue, 'reset');
                 });
 
                 controls.appendChild(sliderWrapper);
@@ -1044,6 +1076,7 @@ document.addEventListener('click', (e) => {
 // 事件监听
 if (modelSelect) {
     modelSelect.addEventListener('change', (e) => {
+        hasSelectedModel = true;
         updateModelSelectButtonText();
         loadModel(e.target.value);
     });
